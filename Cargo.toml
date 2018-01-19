@@ -1,0 +1,9 @@
+[package]
+name = "runjit"
+version = "0.1.0"
+authors = ["gojira"]
+
+[dependencies]
+pest = "1.0.0-beta.17"
+pest_derive = "1.0.0-beta.17"
+# llvm-sys = "50"

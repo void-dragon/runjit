@@ -1,0 +1,81 @@
+
+alpha = { 'a'..'z' | 'A'..'Z' | "_" }
+ident = { alpha ~ (alpha | decimal_digit)* }
+
+decimal_digit = { '0'..'9' }
+decimal_digit_nonzero = { '1'..'9' }
+decimal_digits = { decimal_digit_nonzero ~ decimal_digit* }
+decimal = { ("0" | decimal_digits) ~ "."? ~ decimal_digit* }
+
+string_literal = @{ "\"" ~ (escape | !("\"" | "\\") ~ any)* ~ "\"" }
+escape         = @{ "\\" ~ ("\"" | "\\" | "a" | "b" | "f" | "n" | "r" | "t" | "v" | unicode) }
+unicode        = @{ "u" ~ hex ~ hex ~ hex ~ hex }
+hex            = { '0'..'9' | 'a'..'f' | 'A'..'F' }
+
+numeric = { decimal }
+literal = { "null" | numeric | string_literal }
+eol = { "\n" | "\n\r" | "\r\n" }
+
+input = _{ soi ~ block ~ eoi }
+block = { statement* }
+statement = { assign | call | _if | _loop | _return }
+
+params = { (exp ~ ",")* ~ exp }
+names = { (ident ~ ",")* ~ ident }
+
+access = { ident ~ (access_token | access_exp)* }
+access_token = { "." ~ ident }
+access_exp = { "[" ~ exp ~ "]" }
+
+exp = { ("(" ~ exp ~ ")" | exp_token) ~ (op ~ exp)* }
+exp_token = _ { access | call | literal }
+
+op = _{
+    op_mul | 
+    op_div |
+    op_mod |
+    op_add |
+    op_sub |
+    op_eq |
+    op_neq |
+    op_eq |
+    op_neq |
+    op_gt |
+    op_le |
+    op_gte |
+    op_lee |
+    op_and |
+    op_or
+}
+op_mul = { "*" }
+op_div = { "/" }
+op_mod = { "%" }
+op_add = { "+" }
+op_sub = { "-" }
+op_and = { "&&" }
+op_or = { "||" }
+op_eq = { "==" }
+op_neq = { "!=" }
+op_gt = { ">" }
+op_le = { "<" }
+op_gte = { ">=" }
+op_lee = { "<=" }
+
+lambda = { "(" ~ names? ~ ")" ~ "=>" ~ "{" ~ block ~ "}"}
+array = { "[" ~ (exp ~ ",")* ~ exp? ~ "]" }
+dict = { "{" ~ (dict_el ~ ",")* ~ dict_el? ~ "}" }
+dict_el = _{ ident ~ ":" ~ exp }
+
+assign = { ident ~ "=" ~ (lambda | array | dict | exp) }
+
+call = { ident ~ "(" ~ params? ~ ")" }
+
+_if = { "if" ~ exp ~ "{" ~ block ~ "}" ~ (_else | _elseif)? }
+_elseif = { "else" ~ "if" ~ exp ~ "{" ~ block ~ "}" ~ (_else | _elseif)? }
+_else = { "else" ~ "{" ~ block ~ "}" }
+
+_loop = { "loop" ~ exp? ~ "{" ~ block ~ "}" }
+_return = { "return" ~ exp? }
+
+whitespace = _ { " " | "\t" | eol }
+//comment = { ("/*" ~ any* ~ "*/") | ("//" ~ any* ~ eol) }
