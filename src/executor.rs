@@ -5,14 +5,9 @@ use std::cell::RefCell;
 use std::ops::Deref;
 
 use ast::*;
+use types::*;
 
-pub enum Value {
-    Float(f64),
-    String(String),
-    Lambda(Vec<String>, Vec<Rc<Ast>>),
-    RustCall(Box<Call>),
-    Null,
-}
+
 
 pub struct Context {
     pub parent: Option<Rc<Context>>,
@@ -22,7 +17,7 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Rc<Context> {
-        Rc::new(Context { 
+        Rc::new(Context {
             parent: None,
             values: RefCell::new(BTreeMap::new()),
             statements: Vec::new(),
@@ -30,7 +25,7 @@ impl Context {
     }
 
     pub fn with_parent(parent: Rc<Context>) -> Rc<Context> {
-        Rc::new(Context { 
+        Rc::new(Context {
             parent: Some(parent),
             values: RefCell::new(BTreeMap::new()),
             statements: Vec::new(),
@@ -43,42 +38,36 @@ impl Context {
 
         match maybe {
             Some(m) => Some(m.clone()),
-            None => if let Some(ref parent) = self.parent {
-                parent.get(name)
-            } else {
-                None
-            },
+            None => {
+                if let Some(ref parent) = self.parent {
+                    parent.get(name)
+                } else {
+                    None
+                }
+            }
         }
+    }
+
+    pub fn get_by_ast(&self, var: &Vec<Rc<Ast>>) -> Option<Rc<Value>> {
+        for i in var {
+            match **i {
+                Ast::Str(ref name) => {}
+                Ast::Exp(_, _, _) => {}
+                _ => {}
+            }
+        }
+
+        None
     }
 
     pub fn set(&self, name: &str, val: Rc<Value>) {
         let mut vals = self.values.borrow_mut();
         vals.insert(name.to_string(), val);
     }
+
+    pub fn set_by_ast(&self, var: &Vec<Rc<Ast>>, val: Rc<Value>) {}
 }
 
-type Args = Vec<Rc<Value>>;
-
-pub trait Call {
-    fn call(&self, args: &Args) -> Result<Rc<Value>, String>;
-}
-
-pub struct RustCall<T> where T: Fn(&Args) -> Result<Rc<Value>, String> {
-    func: T,
-}
-
-impl <T> RustCall <T> where T: 'static, T:  Fn(&Args) -> Result<Rc<Value>, String> {
-    pub fn new(f: T) -> Rc<Value> {
-        Rc::new(Value::RustCall(Box::new(RustCall { func: f })))
-    }
-}
-
-impl <T> Call for RustCall<T> where T: Fn(&Args) -> Result<Rc<Value>, String> {
-    fn call(&self, args: &Args)  -> Result<Rc<Value>, String> {
-        // println!("arg count: {}", args.len());
-        (self.func)(args)
-    }
-}
 
 pub fn run(ctx: Rc<Context>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
     match ast.deref() {
@@ -90,9 +79,11 @@ pub fn run(ctx: Rc<Context>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
 fn block(ctx: Rc<Context>, data: &Vec<Rc<Ast>>) -> Result<Rc<Value>, String> {
     for stmnt in data {
         let res = match stmnt.deref() {
-            &Ast::Assign(ref name, ref ast) => assign(ctx.clone(), name, ast.clone()),
+            &Ast::Assign(ref name, ref ast) => assign(ctx.clone(), name.clone(), ast.clone()),
             &Ast::Call(ref name, ref ast) => call(ctx.clone(), name, ast),
-            &Ast::If(ref exp, ref block, ref _else) => _if(ctx.clone(), exp.clone(), &block, _else.clone()),
+            &Ast::If(ref exp, ref block, ref _else) => {
+                _if(ctx.clone(), exp.clone(), &block, _else.clone())
+            }
             _ => Err(String::from("unexpected ast element")),
         };
 
@@ -106,17 +97,15 @@ fn block(ctx: Rc<Context>, data: &Vec<Rc<Ast>>) -> Result<Rc<Value>, String> {
 
 fn exp(ctx: Rc<Context>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
     match ast.deref() {
-        &Ast::Str(ref data) => {
-            Ok(Rc::new(Value::String(data.clone())))
-        }
-        &Ast::Float(ref data) => {
-            Ok(Rc::new(Value::Float(*data)))
-        }
+        &Ast::Str(ref data) => Ok(Rc::new(Value::String(data.clone()))),
+        &Ast::Float(ref data) => Ok(Rc::new(Value::Float(*data))),
         &Ast::Lambda(ref params, ref stmnts) => {
             Ok(Rc::new(Value::Lambda(params.clone(), stmnts.clone())))
         }
-        &Ast::Var(ref name) => {
-            ctx.get(name).ok_or(String::from("unknown variable"))
+        &Ast::Var(ref tokens) => {
+            ctx.get_by_ast(tokens).ok_or(
+                String::from("unknown variable"),
+            )
         }
         &Ast::Exp(ref op, ref left, ref right) => {
             let l = exp(ctx.clone(), left.clone());
@@ -125,25 +114,15 @@ fn exp(ctx: Rc<Context>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
             match l {
                 Ok(v) => {
                     if let Value::Float(lf) = *v {
-                       match r {
+                        match r {
                             Ok(v) => {
                                 if let Value::Float(rf) = *v {
                                     match op {
-                                        &Operation::Add => {
-                                            Ok(Rc::new(Value::Float(lf + rf)))
-                                        }
-                                        &Operation::Sub => {
-                                            Ok(Rc::new(Value::Float(lf - rf)))
-                                        }
-                                        &Operation::Mul => {
-                                            Ok(Rc::new(Value::Float(lf * rf)))
-                                        }
-                                        &Operation::Div => {
-                                            Ok(Rc::new(Value::Float(lf / rf)))
-                                        }
-                                        &Operation::Mod => {
-                                            Ok(Rc::new(Value::Float(lf % rf)))
-                                        }
+                                        &Operation::Add => Ok(Rc::new(Value::Float(lf + rf))),
+                                        &Operation::Sub => Ok(Rc::new(Value::Float(lf - rf))),
+                                        &Operation::Mul => Ok(Rc::new(Value::Float(lf * rf))),
+                                        &Operation::Div => Ok(Rc::new(Value::Float(lf / rf))),
+                                        &Operation::Mod => Ok(Rc::new(Value::Float(lf % rf))),
                                         &Operation::Eq => {
                                             if lf == rf {
                                                 Ok(Rc::new(Value::Float(1.0)))
@@ -158,32 +137,30 @@ fn exp(ctx: Rc<Context>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
                                                 Ok(Rc::new(Value::Null))
                                             }
                                         }
-                                        _ => Err(String::from("unsupported operation"))
+                                        _ => Err(String::from("unsupported operation")),
                                     }
                                 } else {
                                     Err(String::from("only can calculate numbers"))
                                 }
                             }
-                            Err(e) => {
-                                Err(e)
-                            }
+                            Err(e) => Err(e),
                         }
                     } else {
                         Err(String::from("only can calculate numbers"))
                     }
                 }
-                Err(e) => {
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         }
         _ => Err(format!("unexpected expression")),
     }
 }
 
-fn assign(ctx: Rc<Context>, name: &str, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
+fn assign(ctx: Rc<Context>, name: Rc<Ast>, ast: Rc<Ast>) -> Result<Rc<Value>, String> {
     if let Ok(val) = exp(ctx.clone(), ast) {
-        ctx.set(name, val);
+        if let Ast::Var(ref tokens) = *name {
+            ctx.set_by_ast(tokens, val);
+        }
     }
 
     Ok(Rc::new(Value::Null))
@@ -191,9 +168,11 @@ fn assign(ctx: Rc<Context>, name: &str, ast: Rc<Ast>) -> Result<Rc<Value>, Strin
 
 fn call(ctx: Rc<Context>, name: &str, ast: &Vec<Rc<Ast>>) -> Result<Rc<Value>, String> {
     let maybe = ctx.get(name);
-    
+
     if let Some(val) = maybe {
-        let params: Vec<Rc<Value>> = ast.iter().map(|x| exp(ctx.clone(), x.clone()).unwrap()).collect();
+        let params: Vec<Rc<Value>> = ast.iter()
+            .map(|x| exp(ctx.clone(), x.clone()).unwrap())
+            .collect();
 
         match *val {
             Value::Lambda(ref names, ref stmnts) => {
@@ -202,7 +181,7 @@ fn call(ctx: Rc<Context>, name: &str, ast: &Vec<Rc<Ast>>) -> Result<Rc<Value>, S
                 for i in 0..params.len() {
                     new_ctx.set(&names[i], params[i].clone());
                 }
-                
+
                 block(new_ctx, stmnts)
             }
             Value::RustCall(ref rc) => rc.call(&params),
@@ -213,7 +192,12 @@ fn call(ctx: Rc<Context>, name: &str, ast: &Vec<Rc<Ast>>) -> Result<Rc<Value>, S
     }
 }
 
-fn _if(ctx: Rc<Context>, ex: Rc<Ast>, blck: &Vec<Rc<Ast>>, el: Rc<Ast>) -> Result<Rc<Value>, String> {
+fn _if(
+    ctx: Rc<Context>,
+    ex: Rc<Ast>,
+    blck: &Vec<Rc<Ast>>,
+    el: Rc<Ast>,
+) -> Result<Rc<Value>, String> {
     let res = exp(ctx.clone(), ex);
 
     match res {

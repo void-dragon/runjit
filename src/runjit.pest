@@ -24,14 +24,14 @@ params = { (exp ~ ",")* ~ exp }
 names = { (ident ~ ",")* ~ ident }
 
 access = { ident ~ (access_token | access_exp)* }
-access_token = { "." ~ ident }
-access_exp = { "[" ~ exp ~ "]" }
+access_token = _{ "." ~ ident }
+access_exp = _{ "[" ~ exp ~ "]" }
 
 exp = { ("(" ~ exp ~ ")" | exp_token) ~ (op ~ exp)* }
 exp_token = _ { access | call | literal }
 
 op = _{
-    op_mul | 
+    op_mul |
     op_div |
     op_mod |
     op_add |
@@ -66,9 +66,9 @@ array = { "[" ~ (exp ~ ",")* ~ exp? ~ "]" }
 dict = { "{" ~ (dict_el ~ ",")* ~ dict_el? ~ "}" }
 dict_el = _{ ident ~ ":" ~ exp }
 
-assign = { ident ~ "=" ~ (lambda | array | dict | exp) }
+assign = { access ~ "=" ~ (lambda | array | dict | exp) }
 
-call = { ident ~ "(" ~ params? ~ ")" }
+call = { access ~ "(" ~ params? ~ ")" }
 
 _if = { "if" ~ exp ~ "{" ~ block ~ "}" ~ (_else | _elseif)? }
 _elseif = { "else" ~ "if" ~ exp ~ "{" ~ block ~ "}" ~ (_else | _elseif)? }
@@ -78,4 +78,4 @@ _loop = { "loop" ~ exp? ~ "{" ~ block ~ "}" }
 _return = { "return" ~ exp? }
 
 whitespace = _ { " " | "\t" | eol }
-//comment = { ("/*" ~ any* ~ "*/") | ("//" ~ any* ~ eol) }
+comment = _{ "/*" ~ (!"*/" ~ any)* ~ "*/" | "//" ~ (!eol ~ any)* }
