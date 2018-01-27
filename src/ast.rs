@@ -1,8 +1,9 @@
 
 use pest::Parser;
-use pest::inputs::{Input, FileInput};
 use pest::iterators::Pair;
 
+use std::fs::File;
+use std::io::Read;
 use std::rc::Rc;
 
 use parser::*;
@@ -39,7 +40,7 @@ pub enum Ast {
     Nothing,
 }
 
-fn consume<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn consume(pair: Pair<Rule>) -> Rc<Ast> {
     match pair.as_rule() {
         Rule::block => block(pair),
         Rule::statement => statement(pair),
@@ -47,7 +48,7 @@ fn consume<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     }
 }
 
-fn block<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn block(pair: Pair<Rule>) -> Rc<Ast> {
     let mut v = Vec::new();
 
     for pair in pair.into_inner() {
@@ -57,7 +58,7 @@ fn block<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::Block(v))
 }
 
-fn statement<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn statement(pair: Pair<Rule>) -> Rc<Ast> {
     let next = pair.into_inner().next().unwrap();
 
     match next.as_rule() {
@@ -68,7 +69,7 @@ fn statement<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     }
 }
 
-fn access<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn access(pair: Pair<Rule>) -> Rc<Ast> {
     let inner = pair.into_inner();
     let mut var = Vec::new();
 
@@ -86,7 +87,7 @@ fn access<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::Var(var))
 }
 
-fn exp<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn exp(pair: Pair<Rule>) -> Rc<Ast> {
     let mut inner = pair.into_inner();
 
     let next = inner.next().unwrap();
@@ -145,7 +146,7 @@ fn exp<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
 
 }
 
-fn assign<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn assign(pair: Pair<Rule>) -> Rc<Ast> {
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
@@ -166,7 +167,7 @@ fn assign<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::Assign(ident, ex))
 }
 
-fn lambda<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn lambda(pair: Pair<Rule>) -> Rc<Ast> {
     let inner = pair.into_inner();
     let mut names = Vec::new();
     let mut statements = Vec::new();
@@ -192,7 +193,7 @@ fn lambda<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::Lambda(names, statements))
 }
 
-fn call<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn call(pair: Pair<Rule>) -> Rc<Ast> {
     let mut call = pair.into_inner();
 
     let name = String::from(call.next().unwrap().as_str());
@@ -211,7 +212,7 @@ fn call<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::Call(name, params))
 }
 
-fn _if<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn _if(pair: Pair<Rule>) -> Rc<Ast> {
     let mut the_if = pair.into_inner();
 
     let cond = exp(the_if.next().unwrap());
@@ -228,28 +229,31 @@ fn _if<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
     Rc::new(Ast::If(cond, block, elsy))
 }
 
-fn _else<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn _else(pair: Pair<Rule>) -> Rc<Ast> {
     let mut the_else = pair.into_inner();
 
     Rc::new(Ast::Nothing)
 }
 
-fn dict<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn dict(pair: Pair<Rule>) -> Rc<Ast> {
     let mut the_else = pair.into_inner();
 
     Rc::new(Ast::Nothing)
 }
 
-fn array<I: Input>(pair: Pair<Rule, I>) -> Rc<Ast> {
+fn array(pair: Pair<Rule>) -> Rc<Ast> {
     let mut the_else = pair.into_inner();
 
     Rc::new(Ast::Nothing)
 }
 
 pub fn read_file(filename: &str) -> Rc<Ast> {
-    let source = FileInput::new(filename).unwrap();
+    let mut source = String::new();
+    let mut file = File::open(filename).unwrap();
 
-    let pair = RunjitParser::parse(Rule::input, Rc::new(source))
+    file.read_to_string(&mut source).unwrap();
+
+    let pair = RunjitParser::parse(Rule::input, &source)
         .unwrap_or_else(|e| panic!("{}", e))
         .next()
         .unwrap();

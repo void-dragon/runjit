@@ -2,9 +2,9 @@
 alpha = { 'a'..'z' | 'A'..'Z' | "_" }
 ident = { alpha ~ (alpha | decimal_digit)* }
 
-decimal_digit = { '0'..'9' }
-decimal_digit_nonzero = { '1'..'9' }
-decimal_digits = { decimal_digit_nonzero ~ decimal_digit* }
+decimal_digit = _{ '0'..'9' }
+decimal_digit_nonzero = _{ '1'..'9' }
+decimal_digits = _{ decimal_digit_nonzero ~ decimal_digit* }
 decimal = { ("0" | decimal_digits) ~ "."? ~ decimal_digit* }
 
 string_literal = @{ "\"" ~ (escape | !("\"" | "\\") ~ any)* ~ "\"" }

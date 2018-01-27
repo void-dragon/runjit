@@ -1,57 +1,157 @@
 use pest::Parser;
-use pest::inputs::{Input, FileInput};
 use pest::iterators::Pair;
 
+use llvm;
 use llvm::core::*;
 use llvm::prelude::*;
 use llvm::execution_engine::*;
 use llvm::target::*;
 
 use std::collections::BTreeMap;
-use std::ffi::CString;
-use std::rc::Rc;
+use std::fs::File;
+use std::ffi::{CStr, CString};
+use std::io::Read;
 use std::mem;
+use std::rc::Rc;
+use std::ptr;
 
 use libc;
 
 use parser::*;
 
+#[derive(Debug)]
+enum Value {
+    Array(Vec<Rc<Value>>),
+    Dict,
+    Lambda,
+    Float(f64),
+    Str(CString),
+    Null,
+}
+
 pub struct Context {
     llvm_ctx: LLVMContextRef,
     llvm_f64: LLVMTypeRef,
+    llvm_ptr: LLVMTypeRef,
+    llvm_ctx_ptr: LLVMValueRef,
+    self_ptr: *const Context,
     llvm_builder: LLVMBuilderRef,
     llvm_module: LLVMModuleRef,
     extern_functions: BTreeMap<String, (LLVMValueRef, *mut libc::c_void)>,
+    runtime_variables: BTreeMap<CString, Rc<Value>>,
+}
+
+extern "C" fn global_get(name: *const Value) -> *const Value {
+    println!("!! get !!");
+    &Value::Null as *const _
+}
+
+unsafe extern "C" fn global_set(ctx: *mut Context, name: *const Value, val: *mut Value) -> *const Value {
+    println!("!! set {:?} = {:?} !!", *name, *val);
+
+    if let Value::Array(ref a) = *name {
+        if let Value::Str(ref s) = *a[0] {
+            (*ctx).runtime_variables.insert(s.clone(), Rc::from_raw(val));
+        }
+    }
+
+    &Value::Null as *const _
+}
+
+extern "C" fn array_new() -> *const Value {
+    println!("!! new array !!");
+    Rc::into_raw(Rc::new(Value::Array(Vec::new())))
+}
+
+unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Value {
+    println!("!! pushing value !! {:?}", *arr);
+
+    if let Value::Array(ref mut a) = *arr {
+        a.push(Rc::from_raw(v));
+
+        println!("{:?}", a);
+    }
+
+    &Value::Null as *const _
+}
+
+extern "C" fn string_new() -> *const Value {
+    println!("!! new string !!");
+    Rc::into_raw(Rc::new(Value::Str(CString::new("").unwrap())))
+}
+
+unsafe extern "C" fn string_from(bytes: *mut libc::c_char) -> *const Value {
+    println!("!! string from !!");
+    // let data = CString::from_raw(bytes);
+    let data = CStr::from_ptr(bytes);
+    println!("created");
+    Rc::into_raw(Rc::new(Value::Str(data.to_owned())))
+}
+
+extern "C" fn float_new(v: f64) -> *const Value {
+    println!("!! new float {} !!", v);
+    Rc::into_raw(Rc::new(Value::Float(v)))
 }
 
 impl Context {
-    pub fn new() -> Context {
+    pub fn new() -> Box<Context> {
         unsafe {
             let context = LLVMContextCreate();
 
-            Context {
+            let mut ctx = Box::new(Context {
                 llvm_ctx: context,
                 llvm_f64: LLVMDoubleTypeInContext(context),
+                llvm_ptr: LLVMInt64TypeInContext(context),
+                llvm_ctx_ptr: 0 as *mut _,
+                self_ptr: 0 as *const Context,
                 llvm_builder: LLVMCreateBuilderInContext(context),
                 llvm_module: LLVMModuleCreateWithNameInContext(
                     b"__module__\0".as_ptr() as *const _,
                     context,
                 ),
                 extern_functions: BTreeMap::new(),
-            }
+                runtime_variables: BTreeMap::new(),
+            });
+
+            ctx.llvm_ctx_ptr = LLVMAddGlobal(
+                ctx.llvm_module,
+                ctx.llvm_ptr,
+                b"__context\0".as_ptr() as *const _,
+            );
+            ctx.self_ptr = &*ctx as *const Context;
+
+            ctx.add_fn("__global_get", global_get as *mut _, 2);
+            ctx.add_fn("__global_set", global_set as *mut _, 3);
+            ctx.add_fn("__array_new", array_new as *mut _, 0);
+            ctx.add_fn("__array_push", array_push as *mut _, 2);
+            ctx.add_fn("__string_new", string_new as *mut _, 0);
+            ctx.add_fn("__string_from", string_from as *mut _, 1);
+
+            let mut args = Vec::new();
+            args.push(ctx.llvm_f64);
+
+            let ft = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+            let func = LLVMAddFunction(ctx.llvm_module, CString::new("__float_new").unwrap().as_ptr(), ft);
+
+            ctx.extern_functions.insert("__float_new".to_string(), (func, float_new as *mut _));
+
+            ctx
         }
     }
 
     pub fn read_file(&self, filename: &str) {
-        let source = FileInput::new(filename).unwrap();
+        let mut file = File::open(filename).unwrap();
+        let mut source = String::new();
 
-        let pair = RunjitParser::parse(Rule::input, Rc::new(source))
+        file.read_to_string(&mut source).unwrap();
+
+        let pair = RunjitParser::parse(Rule::input, &source)
             .unwrap_or_else(|e| panic!("{}", e))
             .next()
             .unwrap();
 
         unsafe {
-            let main_func_t = LLVMFunctionType(LLVMVoidType(), 0 as *mut LLVMTypeRef, 0, 0);
+            let main_func_t = LLVMFunctionType(LLVMVoidType(), ptr::null_mut(), 0, 0);
             let main = LLVMAddFunction(
                 self.llvm_module,
                 b"__main__\0".as_ptr() as *const _,
@@ -76,9 +176,14 @@ impl Context {
         }
     }
 
-    pub fn add_fn(&mut self, name: &str, f: *mut libc::c_void) {
+    pub fn add_fn(&mut self, name: &str, f: *mut libc::c_void, cnt: u32) {
+        let mut args = Vec::new();
+        for _ in 0..cnt {
+            args.push(self.llvm_ptr);
+        }
+
         let func = unsafe {
-            let ft = LLVMFunctionType(LLVMVoidType(), 0 as *mut LLVMTypeRef, 0, 0);
+            let ft = LLVMFunctionType(self.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
             LLVMAddFunction(self.llvm_module, CString::new(name).unwrap().as_ptr(), ft)
         };
 
@@ -94,41 +199,45 @@ impl Context {
             LLVM_InitializeNativeTarget();
             LLVM_InitializeNativeAsmPrinter();
 
-            println!("create engine");
             LLVMCreateExecutionEngineForModule(&mut ee, self.llvm_module, &mut out);
 
-            println!("set global mapping");
+            LLVMAddGlobalMapping(ee, self.llvm_ctx_ptr, self.self_ptr as *mut _);
+
             for (name, &mut (valref, func)) in self.extern_functions.iter_mut() {
-                // LLVMAddGlobalMapping(ee, valref, mem::transmute(func));
-                // LLVMAddGlobalMapping(ee, valref, func as *mut _);
                 LLVMAddGlobalMapping(ee, valref, func);
             }
 
             let addr = LLVMGetFunctionAddress(ee, b"__main__\0".as_ptr() as *const _);
 
-            println!("run __main__({})", addr);
             let f: extern "C" fn() = mem::transmute(addr);
 
             f();
-            // let mut func: LLVMValueRef = 0 as LLVMValueRef;
-            // LLVMFindFunction(ee, b"__main__\0".as_ptr() as *const _, &mut func);
-            // LLVMRunFunction(ee, func, 0, 0 as *mut _);
 
-            println!("dispose engine");
             LLVMDisposeExecutionEngine(ee);
         }
+    }
+
+    pub fn get_float(&self, name: &str) -> Option<f64> {
+        self.runtime_variables.get(&CString::new(name).unwrap()).and_then(|x| {
+            if let Value::Float(f) = **x {
+                Some(f)
+            } else {
+                None
+            }
+        })
     }
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
+            LLVMDisposeModule(self.llvm_module);
             LLVMContextDispose(self.llvm_ctx);
         }
     }
 }
 
-fn consume<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
+fn consume(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     match pair.as_rule() {
         Rule::block => block(ctx, pair),
         Rule::statement => statement(ctx, pair),
@@ -136,7 +245,7 @@ fn consume<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
     }
 }
 
-fn block<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
+fn block(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut v = Vec::new();
 
     for pair in pair.into_inner() {
@@ -146,131 +255,260 @@ fn block<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
     0 as LLVMValueRef
 }
 
-fn statement<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
+fn statement(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     let next = pair.into_inner().next().unwrap();
 
     match next.as_rule() {
         Rule::assign => assign(ctx, next),
-        //     // Rule::call => call(next),
+        Rule::call => call(ctx, next),
         //     // Rule::_if => _if(next),
         _ => panic!("unrecognized statement: {:?}", next.as_rule()),
     }
 }
 
-fn access<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> Vec<String> {
+fn access(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     let inner = pair.into_inner();
-    let mut var = Vec::new();
+
+    let an_ref = unsafe {
+        let an = ctx.extern_functions.get("__array_new").unwrap();
+
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            an.0,
+            0 as *mut LLVMValueRef,
+            0,
+            b"__array_new\0".as_ptr() as *const _,
+        )
+    };
+
+    let string_from = ctx.extern_functions.get("__string_from").unwrap();
+    let array_push = ctx.extern_functions.get("__array_push").unwrap();
 
     for p in inner {
         print!("{:?} ", p.as_str());
         let x = match p.as_rule() {
-            Rule::ident => String::from(p.as_str()),
-            // Rule::exp => exp(ctx, p),
+            Rule::ident => unsafe {
+                let s = p.as_str();
+                let cstr = LLVMBuildGlobalStringPtr(
+                    ctx.llvm_builder,
+                    CString::new(s).unwrap().as_ptr(),
+                    b"__str\0".as_ptr() as *const _,
+                );
+
+                let args = vec![cstr];
+                LLVMBuildCall(
+                    ctx.llvm_builder,
+                    string_from.0,
+                    args.as_ptr() as *mut LLVMValueRef,
+                    args.len() as u32,
+                    b"__string_from\0".as_ptr() as *const _,
+                )
+            },
+            Rule::exp => unsafe { exp(ctx, p) },
             _ => panic!("unexpected in access rule"),
         };
-        var.push(x);
+
+        let args = vec![an_ref, x];
+        unsafe {
+            LLVMBuildCall(
+                ctx.llvm_builder,
+                array_push.0,
+                args.as_ptr() as *mut LLVMValueRef,
+                args.len() as u32,
+                b"__array_push\0".as_ptr() as *const _,
+            )
+        };
     }
     print!("\n");
 
-    var
+    an_ref
 }
 
-// fn exp<I: Input>(pair: Pair<Rule, I>) {
-//     let mut inner = pair.into_inner();
-//
-//     let next = inner.next().unwrap();
-//     let rule = next.as_rule();
-//     let left = match rule {
-//         Rule::exp => exp(next),
-//         Rule::literal => {
-//             let inner = next.into_inner().next().unwrap();
-//
-//             match inner.as_rule() {
-//                 Rule::numeric => {
-//                     let s = inner.as_str().trim();
-//
-//                     let d: f64 = if let Ok(x) = s.parse() {
-//                         x
-//                     } else {
-//                         s.parse::<i64>().unwrap() as f64
-//                     };
-//
-//                     Rc::new(Ast::Float(d))
-//                 }
-//                 _ => Rc::new(Ast::Str(String::from(inner.as_str()))),
-//             }
-//         }
-//         Rule::access => access(next),
-//         _ => panic!("unknown exp: {:?}", rule),
-//     };
-//
-//     if let Some(op) = inner.next() {
-//         if let Some(right) = inner.next() {
-//
-//             let the_op = match op.as_rule() {
-//                 Rule::op_add => Operation::Add,
-//                 Rule::op_sub => Operation::Sub,
-//                 Rule::op_mul => Operation::Mul,
-//                 Rule::op_div => Operation::Div,
-//                 Rule::op_mod => Operation::Mod,
-//                 Rule::op_and => Operation::And,
-//                 Rule::op_or => Operation::Or,
-//                 Rule::op_eq => Operation::Eq,
-//                 Rule::op_neq => Operation::Neq,
-//                 Rule::op_gt => Operation::Gt,
-//                 Rule::op_le => Operation::Le,
-//                 Rule::op_gte => Operation::Gte,
-//                 Rule::op_lee => Operation::Lee,
-//                 _ => panic!("unknown operation in expression: {:?}", op.as_rule()),
-//             };
-//
-//             Rc::new(Ast::Exp(the_op, left, exp(right)))
-//         } else {
-//             panic!("incomplete expression")
-//         }
-//     } else {
-//         left
-//     }
-//
-// }
-//
+unsafe fn exp(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let mut inner = pair.into_inner();
 
+    let next = inner.next().unwrap();
+    let rule = next.as_rule();
+    let left_ref = match rule {
+        Rule::exp => exp(ctx, next),
+        Rule::literal => {
+            let inner = next.into_inner().next().unwrap();
 
-fn assign<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
+            match inner.as_rule() {
+                Rule::numeric => {
+                    let s = inner.as_str().trim();
+                    println!("[{}]", s);
+                    println!("{:?}", inner);
+                    // LLVMConstRealOfString(ctx.llvm_f64, CString::new(s).unwrap().as_ptr())
+
+                    let float_new = ctx.extern_functions.get("__float_new").unwrap();
+                    let args = vec![LLVMConstReal(ctx.llvm_f64, s.parse().unwrap())];
+                    LLVMBuildCall(
+                        ctx.llvm_builder,
+                        float_new.0,
+                        args.as_ptr() as *mut LLVMValueRef,
+                        args.len() as u32,
+                        b"__float_new\0".as_ptr() as *const _,
+                    )
+                }
+                _ => panic!("not supported yet"),
+            }
+        }
+        Rule::access => access(ctx, next),
+        _ => panic!("unknown exp: {:?}", rule),
+    };
+
+    if let Some(op) = inner.next() {
+        if let Some(right) = inner.next() {
+            let right_ref = exp(ctx, right);
+
+            match op.as_rule() {
+                Rule::op_add => {
+                    LLVMBuildFAdd(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_add\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_sub => {
+                    LLVMBuildFSub(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_sub\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_mul => {
+                    LLVMBuildFMul(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_mul\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_div => {
+                    LLVMBuildFDiv(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_div\0".as_ptr() as *const _,
+                    )
+                }
+                // Rule::op_mod => Operation::Mod,
+                Rule::op_and => {
+                    LLVMBuildAnd(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_and\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_or => {
+                    LLVMBuildOr(
+                        ctx.llvm_builder,
+                        left_ref,
+                        right_ref,
+                        b"exp_or\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_eq => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealOEQ,
+                        left_ref,
+                        right_ref,
+                        b"exp_oeq\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_neq => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealONE,
+                        left_ref,
+                        right_ref,
+                        b"exp_one\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_gt => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealOGT,
+                        left_ref,
+                        right_ref,
+                        b"exp_ogt\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_le => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealOLT,
+                        left_ref,
+                        right_ref,
+                        b"exp_olt\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_gte => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealOGE,
+                        left_ref,
+                        right_ref,
+                        b"exp_oge\0".as_ptr() as *const _,
+                    )
+                }
+                Rule::op_lee => {
+                    LLVMBuildFCmp(
+                        ctx.llvm_builder,
+                        llvm::LLVMRealPredicate::LLVMRealOLE,
+                        left_ref,
+                        right_ref,
+                        b"exp_ole\0".as_ptr() as *const _,
+                    )
+                }
+                _ => panic!("unknown operation in expression: {:?}", op.as_rule()),
+            }
+        } else {
+            panic!("incomplete expression")
+        }
+    } else {
+        left_ref
+    }
+
+}
+
+fn assign(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
-    let ident = match v.as_rule() {
+    let ident_array = match v.as_rule() {
         Rule::access => access(ctx, v),
         _ => panic!("expected access"),
     };
 
-    // let e = inner.next().unwrap();
-    // let ex = match e.as_rule() {
-    //     Rule::exp => exp(ctx, e),
-    //     // Rule::lambda => lambda(e),
-    //     // Rule::dict => dict(e),
-    //     // Rule::array => array(e),
-    //     _ => panic!("unexpected assign: {:?}", e.as_rule()),
-    // };
+    let e = inner.next().unwrap();
+    let ex = match e.as_rule() {
+        Rule::exp => unsafe { exp(ctx, e) }
+        // Rule::lambda => lambda(e),
+        // Rule::dict => dict(e),
+        // Rule::array => array(e),
+        _ => panic!("unexpected assign: {:?}", e.as_rule()),
+    };
 
+    let global_set = ctx.extern_functions.get("__global_set").unwrap();
+    let args = vec![ctx.llvm_ctx_ptr, ident_array, ex];
     unsafe {
-        // let ft = LLVMFunctionType(LLVMVoidType(), 0 as *mut LLVMTypeRef, 0, 0);
-        // let func = LLVMAddFunction(ctx.llvm_module, b"myprint\0".as_ptr() as *const _, ft);
-        // let func = LLVMAddGlobal(ctx.llvm_module, ft, b"myprint\0".as_ptr() as *const _);
-        let val = ctx.extern_functions.get("myprint").unwrap();
-
         LLVMBuildCall(
             ctx.llvm_builder,
-            val.0,
-            0 as *mut LLVMValueRef,
-            0,
-            b"myprint\0".as_ptr() as *const _,
+            global_set.0,
+            args.as_ptr() as *mut LLVMValueRef,
+            args.len() as u32,
+            b"__global_set\0".as_ptr() as *const _,
         )
     }
 }
 //
-// fn lambda<I: Input>(pair: Pair<Rule, I>) {
+// fn lambda(pair: Pair<Rule>) {
 //     let inner = pair.into_inner();
 //     let mut names = Vec::new();
 //     let mut statements = Vec::new();
@@ -295,27 +533,36 @@ fn assign<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
 //
 //     Rc::new(Ast::Lambda(names, statements))
 // }
-//
-// fn call<I: Input>(pair: Pair<Rule, I>) {
-//     let mut call = pair.into_inner();
-//
-//     let name = String::from(call.next().unwrap().as_str());
-//
-//     let mut params = Vec::new();
-//
-//     if let Some(ps) = call.next() {
-//         for mut param in ps.into_inner() {
-//             match param.as_rule() {
-//                 Rule::exp => params.push(exp(param)),
-//                 _ => panic!("unexpected stuff"),
-//             }
-//         }
-//     }
-//
-//     Rc::new(Ast::Call(name, params))
-// }
-//
-// fn _if<I: Input>(pair: Pair<Rule, I>) {
+
+fn call(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let mut call = pair.into_inner();
+
+    // let name = String::from(call.next().unwrap().as_str());
+    //
+    // let mut params = Vec::new();
+    //
+    // if let Some(ps) = call.next() {
+    //     for mut param in ps.into_inner() {
+    //         match param.as_rule() {
+    //             Rule::exp => params.push(exp(param)),
+    //             _ => panic!("unexpected stuff"),
+    //         }
+    //     }
+    // }
+
+    // unsafe {
+    //     LLVMBuildCall(
+    //         ctx.llvm_builder,
+    //         val.0,
+    //         0 as *mut LLVMValueRef,
+    //         0,
+    //         b"myprint\0".as_ptr() as *const _,
+    //     )
+    // }
+    0 as LLVMValueRef
+}
+
+// fn _if(pair: Pair<Rule>) {
 //     let mut the_if = pair.into_inner();
 //
 //     let cond = exp(the_if.next().unwrap());
@@ -332,19 +579,19 @@ fn assign<I: Input>(ctx: &Context, pair: Pair<Rule, I>) -> LLVMValueRef {
 //     Rc::new(Ast::If(cond, block, elsy))
 // }
 //
-// fn _else<I: Input>(pair: Pair<Rule, I>) {
+// fn _else(pair: Pair<Rule>) {
 //     let mut the_else = pair.into_inner();
 //
 //     Rc::new(Ast::Nothing)
 // }
 //
-// fn dict<I: Input>(pair: Pair<Rule, I>) {
+// fn dict(pair: Pair<Rule>) {
 //     let mut the_else = pair.into_inner();
 //
 //     Rc::new(Ast::Nothing)
 // }
 //
-// fn array<I: Input>(pair: Pair<Rule, I>) {
+// fn array(pair: Pair<Rule>) {
 //     let mut the_else = pair.into_inner();
 //
 //     Rc::new(Ast::Nothing)
