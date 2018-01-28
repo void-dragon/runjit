@@ -11,9 +11,14 @@ fn main() {
 
     ctx.add_fn("myprint", myprint as *mut _, 0);
 
+    println!("--- read ---");
+
     ctx.read_file("samples/one.js");
+
+    println!("--- run ---");
 
     ctx.run();
 
     println!("{:?}", ctx.get_float("myvar"));
+    println!("--- done ---");
 }
