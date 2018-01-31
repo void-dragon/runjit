@@ -8,9 +8,26 @@ use libc;
 
 use jit::{Context, Value};
 
-pub extern "C" fn global_get(name: *const Value) -> *const Value {
+pub extern "C" fn global_get(ctx: *mut Context, name: *const Value) -> *const Value {
     println!("!! get !!");
     &Value::Null as *const _
+}
+
+pub unsafe extern "C" fn global_get_func(ctx: *mut Context, name: *const Value) -> u64 {
+    println!("!! get func {:?} !!", *name);
+
+    if let Value::Array(ref a) = *name {
+        if let Value::Str(ref s) = *a[0] {
+            println!("func name {:?}", s);
+            let val = (*ctx).runtime_variables.get(s);
+            println!("value {:?}", val);
+            if let Value::Lambda(v) = **val.unwrap() {
+                return v;
+            }
+        }
+    }
+
+    0
 }
 
 pub unsafe extern "C" fn global_set(
@@ -48,7 +65,7 @@ pub unsafe extern "C" fn add(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn sub(left: *const Value, right: *const Value) -> *const Value {
-    println!("!! add !!");
+    println!("!! sub !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -63,7 +80,7 @@ pub unsafe extern "C" fn sub(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn mul(left: *const Value, right: *const Value) -> *const Value {
-    println!("!! add !!");
+    println!("!! mul !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -78,7 +95,7 @@ pub unsafe extern "C" fn mul(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn div(left: *const Value, right: *const Value) -> *const Value {
-    println!("!! add !!");
+    println!("!! div !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -98,7 +115,7 @@ pub extern "C" fn array_new() -> *const Value {
 }
 
 pub unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Value {
-    println!("!! pushing value !! {:?}", *arr);
+    println!("!! pushing value !! {:?} {:?}", *arr, *v);
 
     if let Value::Array(ref mut a) = *arr {
         a.push(Rc::from_raw(v));
@@ -118,13 +135,17 @@ pub unsafe extern "C" fn string_from(bytes: *mut libc::c_char) -> *const Value {
     println!("!! string from !!");
     // let data = CString::from_raw(bytes);
     let data = CStr::from_ptr(bytes);
-    println!("created");
     Rc::into_raw(Rc::new(Value::Str(data.to_owned())))
 }
 
 pub extern "C" fn float_new(v: f64) -> *const Value {
     println!("!! new float {} !!", v);
     Rc::into_raw(Rc::new(Value::Float(v)))
+}
+
+pub extern "C" fn lambda_new(v: u64) -> *const Value {
+    println!("!! new lambda {} !!", v);
+    Rc::into_raw(Rc::new(Value::Lambda(v)))
 }
 
 pub extern "C" fn value_delete(a: *const Value) -> *const Value {

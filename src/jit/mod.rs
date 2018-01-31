@@ -1,5 +1,6 @@
 use pest::Parser;
 
+use llvm::analysis::*;
 use llvm::core::*;
 use llvm::prelude::*;
 use llvm::execution_engine::*;
@@ -25,17 +26,17 @@ use jit::callbacks::*;
 pub enum Value {
     Array(Vec<Rc<Value>>),
     Dict,
-    Lambda,
+    Lambda(u64),
     Float(f64),
     Str(CString),
     Null,
 }
 
-impl Drop for Value {
-    fn drop(&mut self) {
-        println!("droped value: {:?}", self);
-    }
-}
+// impl Drop for Value {
+//     fn drop(&mut self) {
+//         println!("droped value: {:?}", self);
+//     }
+// }
 
 pub struct Context {
     llvm_ctx: LLVMContextRef,
@@ -45,6 +46,7 @@ pub struct Context {
     self_ptr: *const Context,
     llvm_builder: LLVMBuilderRef,
     llvm_module: LLVMModuleRef,
+    block_stack: Vec<LLVMBasicBlockRef>,
     extern_functions: BTreeMap<String, (LLVMValueRef, *mut libc::c_void)>,
     runtime_variables: BTreeMap<CString, Rc<Value>>,
 }
@@ -57,26 +59,28 @@ impl Context {
             let mut ctx = Box::new(Context {
                 llvm_ctx: context,
                 llvm_f64: LLVMDoubleTypeInContext(context),
-                llvm_ptr: LLVMInt64TypeInContext(context),
+                llvm_ptr: LLVMPointerType(LLVMInt64TypeInContext(context), 0),
                 llvm_ctx_ptr: 0 as *mut _,
                 self_ptr: 0 as *const Context,
                 llvm_builder: LLVMCreateBuilderInContext(context),
                 llvm_module: LLVMModuleCreateWithNameInContext(
-                    b"__module__\0".as_ptr() as *const _,
+                    b"__main__\0".as_ptr() as *const _,
                     context,
                 ),
+                block_stack: Vec::new(),
                 extern_functions: BTreeMap::new(),
                 runtime_variables: BTreeMap::new(),
             });
 
             ctx.llvm_ctx_ptr = LLVMAddGlobal(
                 ctx.llvm_module,
-                ctx.llvm_ptr,
+                LLVMInt64TypeInContext(context),
                 b"__context\0".as_ptr() as *const _,
             );
             ctx.self_ptr = &*ctx as *const Context;
 
             ctx.add_fn("__global_get", global_get as *mut _, 2);
+            // ctx.add_fn("__global_get_func", global_get_func as *mut _, 2);
             ctx.add_fn("__global_set", global_set as *mut _, 3);
             ctx.add_fn("__add", add as *mut _, 2);
             ctx.add_fn("__sub", sub as *mut _, 2);
@@ -85,30 +89,70 @@ impl Context {
             ctx.add_fn("__array_new", array_new as *mut _, 0);
             ctx.add_fn("__array_push", array_push as *mut _, 2);
             ctx.add_fn("__string_new", string_new as *mut _, 0);
-            ctx.add_fn("__string_from", string_from as *mut _, 1);
+            // ctx.add_fn("__string_from", string_from as *mut _, 1);
+            ctx.add_fn("__lambda_new", lambda_new as *mut _, 1);
             ctx.add_fn("__value_delete", value_delete as *mut _, 1);
 
-            let mut args = Vec::new();
-            args.push(ctx.llvm_f64);
+            {
+                let mut args = Vec::new();
+                args.push(ctx.llvm_ptr);
+                args.push(ctx.llvm_ptr);
 
-            let ft = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
-            let func = LLVMAddFunction(
-                ctx.llvm_module,
-                CString::new("__float_new").unwrap().as_ptr(),
-                ft,
-            );
+                let ft = LLVMFunctionType(LLVMInt64TypeInContext(context), args.as_ptr() as *mut _, args.len() as u32, 0);
+                let func = LLVMAddFunction(
+                    ctx.llvm_module,
+                    CString::new("__global_get_func").unwrap().as_ptr(),
+                    ft,
+                );
 
-            ctx.extern_functions.insert("__float_new".to_string(), (
-                func,
-                float_new as
+                ctx.extern_functions.insert("__global_get_func".to_string(), (
+                    func,
+                    global_get_func as
                     *mut _,
-            ));
+                ));
+            }
+
+            {
+                let mut args = Vec::new();
+                args.push(LLVMPointerType(LLVMInt8TypeInContext(context), 0));
+
+                let ft = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+                let func = LLVMAddFunction(
+                    ctx.llvm_module,
+                    CString::new("__string_from").unwrap().as_ptr(),
+                    ft,
+                );
+
+                ctx.extern_functions.insert("__string_from".to_string(), (
+                    func,
+                    string_from as
+                    *mut _,
+                ));
+            }
+
+            {
+                let mut args = Vec::new();
+                args.push(ctx.llvm_f64);
+
+                let ft = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+                let func = LLVMAddFunction(
+                    ctx.llvm_module,
+                    CString::new("__float_new").unwrap().as_ptr(),
+                    ft,
+                );
+
+                ctx.extern_functions.insert("__float_new".to_string(), (
+                    func,
+                    float_new as
+                    *mut _,
+                ));
+            }
 
             ctx
         }
     }
 
-    pub fn read_file(&self, filename: &str) {
+    pub fn read_file(&mut self, filename: &str) {
         let mut file = File::open(filename).unwrap();
         let mut source = String::new();
 
@@ -120,7 +164,7 @@ impl Context {
             .unwrap();
 
         unsafe {
-            let main_func_t = LLVMFunctionType(LLVMVoidType(), ptr::null_mut(), 0, 0);
+            let main_func_t = LLVMFunctionType(LLVMVoidTypeInContext(self.llvm_ctx), ptr::null_mut(), 0, 0);
             let main = LLVMAddFunction(
                 self.llvm_module,
                 b"__main__\0".as_ptr() as *const _,
@@ -133,14 +177,23 @@ impl Context {
                 b"__main__entry\0".as_ptr() as *const _,
             );
 
+            self.block_stack.push(bb);
+
             LLVMPositionBuilderAtEnd(self.llvm_builder, bb);
 
-            build::consume(&self, pair);
+            build::consume(self, pair);
 
             LLVMBuildRetVoid(self.llvm_builder);
 
             LLVMDisposeBuilder(self.llvm_builder);
 
+            // let mut buffer = 0 as *mut i8;
+            LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMAbortProcessAction, 0 as *mut _);
+            // LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMPrintMessageAction, &mut buffer);
+            // let msg = unsafe { CString::from_raw(buffer) };
+            // println!("-- error --\n{:?}", msg);
+
+            println!("-- dump --");
             LLVMDumpModule(self.llvm_module);
         }
     }
@@ -172,8 +225,15 @@ impl Context {
 
             LLVMAddGlobalMapping(ee, self.llvm_ctx_ptr, self.self_ptr as *mut _);
 
-            for (_, &mut (valref, func)) in self.extern_functions.iter_mut() {
+            for (name, &mut (valref, func)) in self.extern_functions.iter_mut() {
                 LLVMAddGlobalMapping(ee, valref, func);
+                // println!("name {}", name);
+                // let addr = LLVMGetFunctionAddress(ee, CString::new(name.as_bytes()).unwrap().as_ptr());
+                // println!("ptr = {:?}", addr);
+                self.runtime_variables.insert(
+                    CString::new(name.as_bytes()).unwrap(),
+                    Rc::new(Value::Lambda(func as u64))
+                );
             }
 
             let addr = LLVMGetFunctionAddress(ee, b"__main__\0".as_ptr() as *const _);

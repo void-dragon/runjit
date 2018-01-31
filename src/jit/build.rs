@@ -13,7 +13,7 @@ use parser::*;
 
 use jit::Context;
 
-pub fn consume(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+pub fn consume(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     match pair.as_rule() {
         Rule::block => block(ctx, pair),
         Rule::statement => statement(ctx, pair),
@@ -21,17 +21,17 @@ pub fn consume(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     }
 }
 
-fn block(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
-    let mut v = Vec::new();
+fn block(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let mut last = 0 as LLVMValueRef;
 
     for pair in pair.into_inner() {
-        v.push(consume(ctx, pair));
+        last = consume(ctx, pair);
     }
 
-    0 as LLVMValueRef
+    last
 }
 
-fn statement(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let next = pair.into_inner().next().unwrap();
 
     match next.as_rule() {
@@ -42,7 +42,28 @@ fn statement(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     }
 }
 
-fn access(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+fn string(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let s = pair.as_str();
+    unsafe {
+        let cstr = LLVMBuildGlobalStringPtr(
+            ctx.llvm_builder,
+            CString::new(s).unwrap().as_ptr(),
+            b"__str\0".as_ptr() as *const _,
+        );
+
+        let args = vec![cstr];
+        let string_from = ctx.extern_functions.get("__string_from").unwrap();
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            string_from.0,
+            args.as_ptr() as *mut LLVMValueRef,
+            args.len() as u32,
+            b"__string_from\0".as_ptr() as *const _,
+        )
+    }
+}
+
+fn access(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let inner = pair.into_inner();
 
     let an_ref = unsafe {
@@ -57,29 +78,11 @@ fn access(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
         )
     };
 
-    let string_from = ctx.extern_functions.get("__string_from").unwrap();
-    let array_push = ctx.extern_functions.get("__array_push").unwrap();
+    let array_push = ctx.extern_functions.get("__array_push").unwrap().clone();
 
     for p in inner {
-        print!("{:?} ", p.as_str());
         let x = match p.as_rule() {
-            Rule::ident => unsafe {
-                let s = p.as_str();
-                let cstr = LLVMBuildGlobalStringPtr(
-                    ctx.llvm_builder,
-                    CString::new(s).unwrap().as_ptr(),
-                    b"__str\0".as_ptr() as *const _,
-                );
-
-                let args = vec![cstr];
-                LLVMBuildCall(
-                    ctx.llvm_builder,
-                    string_from.0,
-                    args.as_ptr() as *mut LLVMValueRef,
-                    args.len() as u32,
-                    b"__string_from\0".as_ptr() as *const _,
-                )
-            },
+            Rule::ident => string(ctx, p),
             Rule::exp => unsafe { exp(ctx, p) },
             _ => panic!("unexpected in access rule"),
         };
@@ -95,12 +98,11 @@ fn access(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
             )
         };
     }
-    print!("\n");
 
     an_ref
 }
 
-unsafe fn const_op(ctx: &Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
+unsafe fn const_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
     match op.as_rule() {
         Rule::op_add => {
             LLVMBuildFAdd(
@@ -209,21 +211,21 @@ unsafe fn const_op(ctx: &Context, left_ref: LLVMValueRef, right_ref: LLVMValueRe
     }
 }
 
-unsafe fn generic_op(ctx: &Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
+unsafe fn generic_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
     let call = match op.as_rule() {
         Rule::op_add => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_sub => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_mul => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_div => ctx.extern_functions.get("__add").unwrap(),
+        Rule::op_sub => ctx.extern_functions.get("__sub").unwrap(),
+        Rule::op_mul => ctx.extern_functions.get("__mul").unwrap(),
+        Rule::op_div => ctx.extern_functions.get("__div").unwrap(),
         // Rule::op_mod => Operation::Mod,
-        Rule::op_and => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_or => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_eq => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_neq => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_gt => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_le => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_gte => ctx.extern_functions.get("__add").unwrap(),
-        Rule::op_lee => ctx.extern_functions.get("__add").unwrap(),
+        Rule::op_and => ctx.extern_functions.get("__and").unwrap(),
+        Rule::op_or => ctx.extern_functions.get("__or").unwrap(),
+        Rule::op_eq => ctx.extern_functions.get("__eq").unwrap(),
+        Rule::op_neq => ctx.extern_functions.get("__neq").unwrap(),
+        Rule::op_gt => ctx.extern_functions.get("__gt").unwrap(),
+        Rule::op_le => ctx.extern_functions.get("__le").unwrap(),
+        Rule::op_gte => ctx.extern_functions.get("__gte").unwrap(),
+        Rule::op_lee => ctx.extern_functions.get("__lee").unwrap(),
         _ => panic!("unknown operation in expression: {:?}", op.as_rule()),
     };
 
@@ -237,7 +239,7 @@ unsafe fn generic_op(ctx: &Context, left_ref: LLVMValueRef, right_ref: LLVMValue
     )
 }
 
-unsafe fn exp(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut inner = pair.into_inner();
 
     let next = inner.next().unwrap();
@@ -250,8 +252,6 @@ unsafe fn exp(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
             match inner.as_rule() {
                 Rule::numeric => {
                     let s = inner.as_str().trim();
-                    println!("[{}]", s);
-                    println!("{:?}", inner);
                     // LLVMConstRealOfString(ctx.llvm_f64, CString::new(s).unwrap().as_ptr())
 
                     let float_new = ctx.extern_functions.get("__float_new").unwrap();
@@ -264,6 +264,7 @@ unsafe fn exp(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
                         b"__float_new\0".as_ptr() as *const _,
                     )
                 }
+                Rule::string_literal => string(ctx, inner),
                 _ => panic!("not supported yet"),
             }
         }
@@ -286,7 +287,7 @@ unsafe fn exp(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
 
 }
 
-fn assign(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
@@ -298,12 +299,11 @@ fn assign(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
     let e = inner.next().unwrap();
     let ex = match e.as_rule() {
         Rule::exp => unsafe { exp(ctx, e) }
-        // Rule::lambda => lambda(e),
+        Rule::lambda => lambda(ctx, e),
         // Rule::dict => dict(e),
         // Rule::array => array(e),
         _ => panic!("unexpected assign: {:?}", e.as_rule()),
     };
-
     let global_set = ctx.extern_functions.get("__global_set").unwrap();
     let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
     let args = vec![ctx.llvm_ctx_ptr, ident_array, ex];
@@ -328,59 +328,88 @@ fn assign(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
         ret
     }
 }
-//
-// fn lambda(pair: Pair<Rule>) {
-//     let inner = pair.into_inner();
-//     let mut names = Vec::new();
-//     let mut statements = Vec::new();
-//
-//     for node in inner {
-//         match node.as_rule() {
-//             Rule::names => {
-//                 let inner = node.into_inner();
-//
-//                 for node in inner {
-//                     names.push(String::from(node.as_str()));
-//                 }
-//             }
-//             Rule::block => {
-//                 if let Ok(Ast::Block(stmnts)) = Rc::try_unwrap(block(node)) {
-//                     statements = stmnts;
-//                 }
-//             }
-//             _ => panic!("unexpected element"),
-//         }
-//     }
-//
-//     Rc::new(Ast::Lambda(names, statements))
-// }
 
-fn call(ctx: &Context, pair: Pair<Rule>) -> LLVMValueRef {
+fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let mut inner = pair.into_inner();
+    let mut names = Vec::new();
+    let mut args = Vec::new();
+
+    for node in inner.next().unwrap().into_inner() {
+        names.push(String::from(node.as_str()));
+        args.push(ctx.llvm_ptr);
+    }
+
+    unsafe {
+        let ftype = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+        let func = LLVMAddFunction(ctx.llvm_module, b"__lambda\0".as_ptr() as *const _, ftype);
+
+        let bb = LLVMAppendBasicBlockInContext(ctx.llvm_ctx, func, b"__entry\0".as_ptr() as *const _ );
+        ctx.block_stack.push(bb);
+        LLVMPositionBuilderAtEnd(ctx.llvm_builder, bb);
+
+        let last = block(ctx, inner.next().unwrap());
+
+        LLVMBuildRet(ctx.llvm_builder, last);
+
+        ctx.block_stack.pop();
+        LLVMPositionBuilderAtEnd(ctx.llvm_builder, ctx.block_stack[ctx.block_stack.len() - 1]);
+
+        let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
+        let lambda_new = ctx.extern_functions.get("__lambda_new").unwrap();
+        let args = vec![ptr];
+
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            lambda_new.0,
+            args.as_ptr() as *mut LLVMValueRef,
+            args.len() as u32,
+            b"__lambda_address\0".as_ptr() as *const _,
+        )
+    }
+
+}
+
+fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut call = pair.into_inner();
+    let mut params = Vec::new();
 
-    // let name = String::from(call.next().unwrap().as_str());
-    //
-    // let mut params = Vec::new();
-    //
-    // if let Some(ps) = call.next() {
-    //     for mut param in ps.into_inner() {
-    //         match param.as_rule() {
-    //             Rule::exp => params.push(exp(param)),
-    //             _ => panic!("unexpected stuff"),
-    //         }
-    //     }
-    // }
+    println!("build call");
 
-    // unsafe {
-    //     LLVMBuildCall(
-    //         ctx.llvm_builder,
-    //         val.0,
-    //         0 as *mut LLVMValueRef,
-    //         0,
-    //         b"myprint\0".as_ptr() as *const _,
-    //     )
-    // }
-    0 as LLVMValueRef
+    let name = access(ctx, call.next().unwrap());
+
+    if let Some(ps) = call.next() {
+        for mut param in ps.into_inner() {
+            match param.as_rule() {
+                Rule::exp => params.push(unsafe { exp(ctx, param) } ),
+                _ => panic!("unexpected rule: {:?}", param.as_rule()),
+            }
+        }
+    }
+
+    let get_global = ctx.extern_functions.get("__global_get_func").unwrap();
+    let args = vec![ctx.llvm_ctx_ptr, name];
+    unsafe {
+        let func = LLVMBuildCall(
+            ctx.llvm_builder,
+            get_global.0,
+            args.as_ptr() as *mut _,
+            args.len() as u32,
+            b"global_get_func\0".as_ptr() as *const _,
+        );
+
+        let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
+        // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+        let func_ptr = LLVMBuildIntToPtr(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+        // let func_ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            func_ptr,
+            params.as_ptr() as *mut _,
+            params.len() as u32,
+            b"call\0".as_ptr() as *const _,
+        )
+    }
 }
 
 // fn _if(pair: Pair<Rule>) {

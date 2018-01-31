@@ -1,3 +1,3 @@
-// call = (x) => { print(x) }
-// call("once")
+call = (x) => { print() }
+call()
 myvar = 42 + 6

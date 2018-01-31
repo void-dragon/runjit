@@ -9,7 +9,7 @@ fn myprint() {
 fn main() {
     let mut ctx = Context::new();
 
-    ctx.add_fn("myprint", myprint as *mut _, 0);
+    ctx.add_fn("print", myprint as *mut _, 0);
 
     println!("--- read ---");
 
