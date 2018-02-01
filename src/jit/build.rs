@@ -7,6 +7,7 @@ use llvm;
 use llvm::prelude::*;
 use llvm::core::*;
 
+use std::collections::BTreeMap;
 use std::ffi::CString;
 
 use parser::*;
@@ -331,11 +332,12 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
 fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut inner = pair.into_inner();
-    let mut names = Vec::new();
+    let mut params = Vec::new();
+    let mut param_refs = BTreeMap::new();
     let mut args = Vec::new();
 
     for node in inner.next().unwrap().into_inner() {
-        names.push(String::from(node.as_str()));
+        params.push(String::from(node.as_str()));
         args.push(ctx.llvm_ptr);
     }
 
@@ -343,15 +345,23 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         let ftype = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
         let func = LLVMAddFunction(ctx.llvm_module, b"__lambda\0".as_ptr() as *const _, ftype);
 
+        for i in 0..params.len() {
+            let val = LLVMGetParam(func, i as u32);
+            param_refs.insert(params[i].clone(), val);
+        }
+
         let bb = LLVMAppendBasicBlockInContext(ctx.llvm_ctx, func, b"__entry\0".as_ptr() as *const _ );
-        ctx.block_stack.push(bb);
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, bb);
+
+        ctx.param_stack.push(param_refs);
+        ctx.block_stack.push(bb);
 
         let last = block(ctx, inner.next().unwrap());
 
         LLVMBuildRet(ctx.llvm_builder, last);
 
         ctx.block_stack.pop();
+        ctx.param_stack.pop();
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, ctx.block_stack[ctx.block_stack.len() - 1]);
 
         let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);

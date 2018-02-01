@@ -30,12 +30,12 @@ anArray = [1, "2"]
 aDict = { name: "the man" }
 
 // functions have no name, if you want lambdas with namse aka functions,
-// then store them in variable, like any other variable
+// then store them in a variable, like any other variable
 func = (a) => { print(a) }
 
 func(stuff)
 
-// ofcurse we have ifs
+// ofcourse we have ifs
 if 12 == 2 * 6 {
     print("should be 12")
 } else {
@@ -53,7 +53,7 @@ loop x < stuff {
 
 ## Additional Information
 
-+ https://docs.rs/pest/1.0.0-beta.17/pest/
++ https://docs.rs/pest
 + https://github.com/pest-parser/pest
 
 + http://llvm.org/docs/tutorial/LangImpl01.html

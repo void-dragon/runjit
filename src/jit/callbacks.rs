@@ -8,8 +8,19 @@ use libc;
 
 use jit::{Context, Value};
 
-pub extern "C" fn global_get(ctx: *mut Context, name: *const Value) -> *const Value {
-    println!("!! get !!");
+pub unsafe extern "C" fn global_get(ctx: *mut Context, name: *const Value) -> *const Value {
+    println!("!! get {:?} !!", *name);
+
+    if let Value::Array(ref a) = *name {
+        if let Value::Str(ref s) = *a[0] {
+            let val = (*ctx).runtime_variables.get(s);
+
+            if let Some(val) = val {
+                return Rc::into_raw(val.clone());
+            }
+        }
+    }
+
     &Value::Null as *const _
 }
 
@@ -18,9 +29,8 @@ pub unsafe extern "C" fn global_get_func(ctx: *mut Context, name: *const Value) 
 
     if let Value::Array(ref a) = *name {
         if let Value::Str(ref s) = *a[0] {
-            println!("func name {:?}", s);
             let val = (*ctx).runtime_variables.get(s);
-            println!("value {:?}", val);
+
             if let Value::Lambda(v) = **val.unwrap() {
                 return v;
             }
@@ -119,8 +129,6 @@ pub unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Va
 
     if let Value::Array(ref mut a) = *arr {
         a.push(Rc::from_raw(v));
-
-        println!("{:?}", a);
     }
 
     &Value::Null as *const _

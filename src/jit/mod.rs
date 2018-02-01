@@ -25,7 +25,7 @@ use jit::callbacks::*;
 #[derive(Debug)]
 pub enum Value {
     Array(Vec<Rc<Value>>),
-    Dict,
+    Dict(BTreeMap<CString, Rc<Value>>),
     Lambda(u64),
     Float(f64),
     Str(CString),
@@ -47,6 +47,7 @@ pub struct Context {
     llvm_builder: LLVMBuilderRef,
     llvm_module: LLVMModuleRef,
     block_stack: Vec<LLVMBasicBlockRef>,
+    param_stack: Vec<BTreeMap<String, LLVMValueRef>>,
     extern_functions: BTreeMap<String, (LLVMValueRef, *mut libc::c_void)>,
     runtime_variables: BTreeMap<CString, Rc<Value>>,
 }
@@ -68,6 +69,7 @@ impl Context {
                     context,
                 ),
                 block_stack: Vec::new(),
+                param_stack: Vec::new(),
                 extern_functions: BTreeMap::new(),
                 runtime_variables: BTreeMap::new(),
             });
@@ -107,8 +109,7 @@ impl Context {
 
                 ctx.extern_functions.insert("__global_get_func".to_string(), (
                     func,
-                    global_get_func as
-                    *mut _,
+                    global_get_func as *mut _,
                 ));
             }
 
@@ -125,8 +126,7 @@ impl Context {
 
                 ctx.extern_functions.insert("__string_from".to_string(), (
                     func,
-                    string_from as
-                    *mut _,
+                    string_from as *mut _,
                 ));
             }
 
@@ -143,8 +143,7 @@ impl Context {
 
                 ctx.extern_functions.insert("__float_new".to_string(), (
                     func,
-                    float_new as
-                    *mut _,
+                    float_new as *mut _,
                 ));
             }
 
@@ -227,9 +226,7 @@ impl Context {
 
             for (name, &mut (valref, func)) in self.extern_functions.iter_mut() {
                 LLVMAddGlobalMapping(ee, valref, func);
-                // println!("name {}", name);
-                // let addr = LLVMGetFunctionAddress(ee, CString::new(name.as_bytes()).unwrap().as_ptr());
-                // println!("ptr = {:?}", addr);
+
                 self.runtime_variables.insert(
                     CString::new(name.as_bytes()).unwrap(),
                     Rc::new(Value::Lambda(func as u64))
