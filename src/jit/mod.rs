@@ -47,7 +47,7 @@ pub struct Context {
     llvm_builder: LLVMBuilderRef,
     llvm_module: LLVMModuleRef,
     block_stack: Vec<LLVMBasicBlockRef>,
-    param_stack: Vec<BTreeMap<String, LLVMValueRef>>,
+    local_stack: Vec<BTreeMap<String, LLVMValueRef>>,
     extern_functions: BTreeMap<String, (LLVMValueRef, *mut libc::c_void)>,
     runtime_variables: BTreeMap<CString, Rc<Value>>,
 }
@@ -69,7 +69,7 @@ impl Context {
                     context,
                 ),
                 block_stack: Vec::new(),
-                param_stack: Vec::new(),
+                local_stack: Vec::new(),
                 extern_functions: BTreeMap::new(),
                 runtime_variables: BTreeMap::new(),
             });

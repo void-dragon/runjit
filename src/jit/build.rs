@@ -43,30 +43,58 @@ fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     }
 }
 
+unsafe fn build_string(ctx: &mut Context, s: &str) -> LLVMValueRef {
+    let cstr = LLVMBuildGlobalStringPtr(
+        ctx.llvm_builder,
+        CString::new(s).unwrap().as_ptr(),
+        b"__str\0".as_ptr() as *const _,
+    );
+
+    let args = vec![cstr];
+    let string_from = ctx.extern_functions.get("__string_from").unwrap();
+    LLVMBuildCall(
+        ctx.llvm_builder,
+        string_from.0,
+        args.as_ptr() as *mut LLVMValueRef,
+        args.len() as u32,
+        b"__string_from\0".as_ptr() as *const _,
+    )
+}
+
 fn string(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let s = pair.as_str();
-    unsafe {
-        let cstr = LLVMBuildGlobalStringPtr(
-            ctx.llvm_builder,
-            CString::new(s).unwrap().as_ptr(),
-            b"__str\0".as_ptr() as *const _,
-        );
+    unsafe { build_string(ctx, s) }
+}
 
-        let args = vec![cstr];
-        let string_from = ctx.extern_functions.get("__string_from").unwrap();
-        LLVMBuildCall(
-            ctx.llvm_builder,
-            string_from.0,
-            args.as_ptr() as *mut LLVMValueRef,
-            args.len() as u32,
-            b"__string_from\0".as_ptr() as *const _,
-        )
+enum AccessToken {
+    Pure(String),
+    Parts(Vec<LLVMValueRef>),
+}
+
+fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
+    let inner: Vec<_> = pair.into_inner().collect();
+
+    if inner.len() == 1 {
+        let name = inner[0].as_str().to_string();
+        AccessToken::Pure(name)
+    } else {
+        let mut parts = Vec::new();
+
+        for p in inner {
+            let x = match p.as_rule() {
+                Rule::ident => string(ctx, p),
+                Rule::exp => unsafe { exp(ctx, p) },
+                _ => panic!("unexpected in access rule"),
+            };
+
+            parts.push(x);
+        }
+
+        AccessToken::Parts(parts)
     }
 }
 
-fn access(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    let inner = pair.into_inner();
-
+fn build_access_array(ctx: &mut Context, parts: &Vec<LLVMValueRef>) -> LLVMValueRef {
     let an_ref = unsafe {
         let an = ctx.extern_functions.get("__array_new").unwrap();
 
@@ -81,14 +109,8 @@ fn access(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     let array_push = ctx.extern_functions.get("__array_push").unwrap().clone();
 
-    for p in inner {
-        let x = match p.as_rule() {
-            Rule::ident => string(ctx, p),
-            Rule::exp => unsafe { exp(ctx, p) },
-            _ => panic!("unexpected in access rule"),
-        };
-
-        let args = vec![an_ref, x];
+    for p in parts {
+        let args = vec![an_ref, *p];
         unsafe {
             LLVMBuildCall(
                 ctx.llvm_builder,
@@ -101,6 +123,60 @@ fn access(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     }
 
     an_ref
+}
+
+fn build_global_get(ctx: &mut Context, name: LLVMValueRef) -> LLVMValueRef {
+    let get_global = ctx.extern_functions.get("__global_get_func").unwrap();
+    let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
+    let args = vec![ctx.llvm_ctx_ptr, name];
+    let delete_args = vec![name];
+
+    unsafe {
+        let func = LLVMBuildCall(
+            ctx.llvm_builder,
+            get_global.0,
+            args.as_ptr() as *mut _,
+            args.len() as u32,
+            b"global_get_func\0".as_ptr() as *const _,
+        );
+
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            value_delete.0,
+            delete_args.as_ptr() as *mut LLVMValueRef,
+            delete_args.len() as u32,
+            b"__value_delete\0".as_ptr() as *const _,
+        );
+
+        func
+    }
+}
+
+fn build_global_set(ctx: &mut Context, name: LLVMValueRef, value: LLVMValueRef) -> LLVMValueRef {
+    let global_set = ctx.extern_functions.get("__global_set").unwrap();
+    let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
+    let args = vec![ctx.llvm_ctx_ptr, name, value];
+    let delete_args = vec![name];
+
+    unsafe {
+        let ret = LLVMBuildCall(
+            ctx.llvm_builder,
+            global_set.0,
+            args.as_ptr() as *mut LLVMValueRef,
+            args.len() as u32,
+            b"__global_set\0".as_ptr() as *const _,
+        );
+
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            value_delete.0,
+            delete_args.as_ptr() as *mut LLVMValueRef,
+            delete_args.len() as u32,
+            b"__value_delete\0".as_ptr() as *const _,
+        );
+
+        ret
+    }
 }
 
 unsafe fn const_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
@@ -269,7 +345,17 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
                 _ => panic!("not supported yet"),
             }
         }
-        Rule::access => access(ctx, next),
+        Rule::access => {
+            match access(ctx, next) {
+                AccessToken::Pure(name) => {
+                    *ctx.local_stack.last().unwrap().get(&name).unwrap()
+                }
+                AccessToken::Parts(parts) => {
+                    let name = build_access_array(ctx, &parts);
+                    build_global_get(ctx, name)
+                }
+            }
+        }
         _ => panic!("unknown exp: {:?}", rule),
     };
 
@@ -292,7 +378,7 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
-    let ident_array = match v.as_rule() {
+    let access_token = match v.as_rule() {
         Rule::access => access(ctx, v),
         _ => panic!("expected access"),
     };
@@ -305,28 +391,24 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         // Rule::array => array(e),
         _ => panic!("unexpected assign: {:?}", e.as_rule()),
     };
-    let global_set = ctx.extern_functions.get("__global_set").unwrap();
-    let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
-    let args = vec![ctx.llvm_ctx_ptr, ident_array, ex];
-    let delete_args = vec![ident_array];
-    unsafe {
-        let ret = LLVMBuildCall(
-            ctx.llvm_builder,
-            global_set.0,
-            args.as_ptr() as *mut LLVMValueRef,
-            args.len() as u32,
-            b"__global_set\0".as_ptr() as *const _,
-        );
 
-        LLVMBuildCall(
-            ctx.llvm_builder,
-            value_delete.0,
-            delete_args.as_ptr() as *mut LLVMValueRef,
-            delete_args.len() as u32,
-            b"__value_delete\0".as_ptr() as *const _,
-        );
+    match access_token {
+        AccessToken::Pure(name) => {
+            if ctx.local_stack.len() > 0 {
+                ctx.local_stack.last_mut().unwrap().insert(name, ex);
 
-        ret
+                ex
+            } else {
+                let nurf = unsafe { build_string(ctx, &name) };
+                let parts = vec![nurf];
+                let ident_array = build_access_array(ctx, &parts);
+                build_global_set(ctx, ident_array, ex)
+            }
+        }
+        AccessToken::Parts(parts) => {
+            let ident_array = build_access_array(ctx, &parts);
+            build_global_set(ctx, ident_array, ex)
+        }
     }
 }
 
@@ -353,7 +435,7 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         let bb = LLVMAppendBasicBlockInContext(ctx.llvm_ctx, func, b"__entry\0".as_ptr() as *const _ );
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, bb);
 
-        ctx.param_stack.push(param_refs);
+        ctx.local_stack.push(param_refs);
         ctx.block_stack.push(bb);
 
         let last = block(ctx, inner.next().unwrap());
@@ -361,7 +443,7 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         LLVMBuildRet(ctx.llvm_builder, last);
 
         ctx.block_stack.pop();
-        ctx.param_stack.pop();
+        ctx.local_stack.pop();
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, ctx.block_stack[ctx.block_stack.len() - 1]);
 
         let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
@@ -383,9 +465,8 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut call = pair.into_inner();
     let mut params = Vec::new();
 
-    println!("build call");
 
-    let name = access(ctx, call.next().unwrap());
+    let access_token = access(ctx, call.next().unwrap());
 
     if let Some(ps) = call.next() {
         for mut param in ps.into_inner() {
@@ -396,22 +477,57 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         }
     }
 
-    let get_global = ctx.extern_functions.get("__global_get_func").unwrap();
-    let args = vec![ctx.llvm_ctx_ptr, name];
+    let func_ptr = match access_token {
+        AccessToken::Pure(name) => {
+            println!("build call {}", name);
+
+            let val = ctx.local_stack.last().and_then(|v| match v.get(&name) {
+                Some(var) => Some(*var),
+                None => {
+                    let val = { ctx.extern_functions.get(&name).clone() };
+                    match val {
+                        Some(efunc) => Some(efunc.0),
+                        None => {
+                            None
+                        }
+                    }
+                }
+            });
+
+            match val {
+                Some(v) => v,
+                None => {
+                    let val = unsafe { build_string(ctx, &name) };
+                    let name = build_access_array(ctx, &vec![val]);
+                    let func = build_global_get(ctx, name);
+
+                    unsafe {
+                        let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
+                        // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+                        let func_ptr = LLVMBuildIntToPtr(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+                        // let func_ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+
+                        func_ptr
+                    }
+                }
+            }
+        }
+        AccessToken::Parts(parts) => {
+            let name = build_access_array(ctx, &parts);
+            let func = build_global_get(ctx, name);
+
+            unsafe {
+                let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
+                // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
+                let func_ptr = LLVMBuildIntToPtr(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+                // let func_ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
+
+                func_ptr
+            }
+        }
+    };
+
     unsafe {
-        let func = LLVMBuildCall(
-            ctx.llvm_builder,
-            get_global.0,
-            args.as_ptr() as *mut _,
-            args.len() as u32,
-            b"global_get_func\0".as_ptr() as *const _,
-        );
-
-        let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
-        // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
-        let func_ptr = LLVMBuildIntToPtr(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
-        // let func_ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
-
         LLVMBuildCall(
             ctx.llvm_builder,
             func_ptr,
