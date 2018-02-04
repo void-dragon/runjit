@@ -19,6 +19,8 @@ fn main() {
 
     ctx.run();
 
-    println!("{:?}", ctx.get_float("myvar"));
+    println!("{:?}", ctx.get("myvar"));
+    println!("{:?}", ctx.get("x"));
+    println!("{:?}", ctx.get("arr"));
     println!("--- done ---");
 }

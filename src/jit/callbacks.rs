@@ -1,6 +1,7 @@
 //!
 //! Nice and fluffy rust callbacks for the llvm generated code.
 //!
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
@@ -131,6 +132,35 @@ pub unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Va
         a.push(Rc::from_raw(v));
     }
 
+    &Value::Null as *const _
+}
+
+pub extern "C" fn dict_new() -> *const Value {
+    println!("!! new dict !!");
+
+    Rc::into_raw(Rc::new(Value::Dict(BTreeMap::new())))
+}
+
+pub unsafe extern "C" fn dict_insert(
+    dct: *mut Value,
+    key: *mut Value,
+    val: *mut Value,
+) -> *const Value {
+    if let Value::Dict(ref mut d) = *dct {
+        if let Value::Str(ref k) = *key {
+            d.insert(k.clone(), Rc::from_raw(val));
+        }
+    }
+
+    &Value::Null as *const _
+}
+
+pub unsafe extern "C" fn dict_remove(dct: *mut Value, key: *mut Value) -> *const Value {
+    if let Value::Dict(ref mut d) = *dct {
+        if let Value::Str(ref k) = *key {
+            d.remove(k);
+        }
+    }
     &Value::Null as *const _
 }
 

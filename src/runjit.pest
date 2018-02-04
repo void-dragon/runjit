@@ -64,7 +64,7 @@ op_lee = { "<=" }
 lambda = { "(" ~ names? ~ ")" ~ "=>" ~ "{" ~ block ~ "}"}
 array = { "[" ~ (exp ~ ",")* ~ exp? ~ "]" }
 dict = { "{" ~ (dict_el ~ ",")* ~ dict_el? ~ "}" }
-dict_el = _{ ident ~ ":" ~ exp }
+dict_el = { ident ~ ":" ~ exp }
 
 assign = { access ~ "=" ~ (lambda | array | dict | exp) }
 

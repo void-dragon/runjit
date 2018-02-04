@@ -32,11 +32,11 @@ pub enum Value {
     Null,
 }
 
-// impl Drop for Value {
-//     fn drop(&mut self) {
-//         println!("droped value: {:?}", self);
-//     }
-// }
+impl Drop for Value {
+    fn drop(&mut self) {
+        println!("droped value: {:?}", self);
+    }
+}
 
 pub struct Context {
     llvm_ctx: LLVMContextRef,
@@ -90,6 +90,9 @@ impl Context {
             ctx.add_fn("__div", div as *mut _, 2);
             ctx.add_fn("__array_new", array_new as *mut _, 0);
             ctx.add_fn("__array_push", array_push as *mut _, 2);
+            ctx.add_fn("__dict_new", dict_new as *mut _, 0);
+            ctx.add_fn("__dict_insert", dict_insert as *mut _, 3);
+            ctx.add_fn("__dict_remove", dict_remove as *mut _, 2);
             ctx.add_fn("__string_new", string_new as *mut _, 0);
             // ctx.add_fn("__string_from", string_from as *mut _, 1);
             ctx.add_fn("__lambda_new", lambda_new as *mut _, 1);
@@ -243,14 +246,10 @@ impl Context {
         }
     }
 
-    pub fn get_float(&self, name: &str) -> Option<f64> {
+    pub fn get(&self, name: &str) -> Option<Rc<Value>> {
         self.runtime_variables
             .get(&CString::new(name).unwrap())
-            .and_then(|x| if let Value::Float(f) = **x {
-                Some(f)
-            } else {
-                None
-            })
+            .and_then(|v| Some(v.clone()))
     }
 }
 

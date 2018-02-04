@@ -1,6 +1,11 @@
 //!
 //! Build llvm ir from parser input.
 //!
+//! # TODO
+//!
+//! + reuse string constants
+//! + optemize pure expressions
+//!
 use pest::iterators::Pair;
 
 use llvm;
@@ -75,7 +80,7 @@ fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
     let inner: Vec<_> = pair.into_inner().collect();
 
     if inner.len() == 1 {
-        let name = inner[0].as_str().to_string();
+        let name = inner[0].as_str().trim().to_string();
         AccessToken::Pure(name)
     } else {
         let mut parts = Vec::new();
@@ -341,7 +346,10 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
                         b"__float_new\0".as_ptr() as *const _,
                     )
                 }
-                Rule::string_literal => string(ctx, inner),
+                Rule::string_literal => {
+                    let s = inner.as_str();
+                    build_string(ctx, s.slice_unchecked(1, s.len() - 1))
+                }
                 _ => panic!("not supported yet"),
             }
         }
@@ -387,8 +395,8 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let ex = match e.as_rule() {
         Rule::exp => unsafe { exp(ctx, e) }
         Rule::lambda => lambda(ctx, e),
-        // Rule::dict => dict(e),
-        // Rule::array => array(e),
+        Rule::dict => dict(ctx, e),
+        Rule::array => array(ctx, e),
         _ => panic!("unexpected assign: {:?}", e.as_rule()),
     };
 
@@ -465,7 +473,6 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     let mut call = pair.into_inner();
     let mut params = Vec::new();
 
-
     let access_token = access(ctx, call.next().unwrap());
 
     if let Some(ps) = call.next() {
@@ -479,8 +486,6 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     let func_ptr = match access_token {
         AccessToken::Pure(name) => {
-            println!("build call {}", name);
-
             let val = ctx.local_stack.last().and_then(|v| match v.get(&name) {
                 Some(var) => Some(*var),
                 None => {
@@ -560,15 +565,70 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 //
 //     Rc::new(Ast::Nothing)
 // }
-//
-// fn dict(pair: Pair<Rule>) {
-//     let mut the_else = pair.into_inner();
-//
-//     Rc::new(Ast::Nothing)
-// }
-//
-// fn array(pair: Pair<Rule>) {
-//     let mut the_else = pair.into_inner();
-//
-//     Rc::new(Ast::Nothing)
-// }
+
+fn dict(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let inner = pair.into_inner();
+    let dict_new = ctx.extern_functions.get("__dict_new").unwrap().clone();
+    let dict_insert = ctx.extern_functions.get("__dict_insert").unwrap().clone();
+
+    let dct = unsafe {
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            dict_new.0,
+            0 as *mut LLVMValueRef,
+            0,
+            b"__dict_new\0".as_ptr() as *const _,
+        )
+    };
+
+    for p in inner {
+        let mut inner = p.into_inner();
+
+        unsafe {
+            let ident = string(ctx, inner.next().unwrap());
+            let args = vec![dct, ident, exp(ctx, inner.next().unwrap())];
+
+            LLVMBuildCall(
+                ctx.llvm_builder,
+                dict_insert.0,
+                args.as_ptr() as *mut LLVMValueRef,
+                args.len() as u32,
+                b"__dict_insert\0".as_ptr() as *const _,
+            );
+        }
+    }
+
+    dct
+}
+
+fn array(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    let inner = pair.into_inner();
+    let array_new = ctx.extern_functions.get("__array_new").unwrap().clone();
+    let array_push = ctx.extern_functions.get("__array_push").unwrap().clone();
+
+    let arr = unsafe {
+        LLVMBuildCall(
+            ctx.llvm_builder,
+            array_new.0,
+            0 as *mut LLVMValueRef,
+            0,
+            b"__array_new\0".as_ptr() as *const _,
+        )
+    };
+
+    for p in inner {
+        unsafe {
+            let args = vec![arr, exp(ctx, p)];
+
+            LLVMBuildCall(
+                ctx.llvm_builder,
+                array_push.0,
+                args.as_ptr() as *mut LLVMValueRef,
+                args.len() as u32,
+                b"__array_push\0".as_ptr() as *const _,
+            );
+        }
+    }
+
+    arr
+}
