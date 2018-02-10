@@ -51,6 +51,28 @@ loop x < stuff {
 
 ```
 
+## dev setup
+
+### linux
+
++ install LLVM
++ install rustup, stable and nightly build chain should work
+
+### windows
+
+On windows we use a MinGW setup.
+
+**Note:** For llvm compilation hits, you can look here too: https://docs.rs/crate/llvm-sys
+
++ Install mingw, Nuwen's MinGW distro is excelent: https://nuwen.net/mingw.html
++ Install [CMake](https://cmake.org/download/).
++ Download the [Ninja Build Tool](https://ninja-build.org/) and save it in MinGW's bin folder.
++ Get the sweet [LLVM source folder](http://releases.llvm.org/download.html) and extract it.
+  Configure with CMake for a Ninja build. Pay attention, that the build is switched to *release*.
++ Install rustup up and use {stable|nightly}-gnu build chain.
++ LLVM_SYS_50_PREBUILD environment variable to the LLVM build folder.
++ Finaly build runjit.
+
 ## Additional Information
 
 + https://docs.rs/pest
