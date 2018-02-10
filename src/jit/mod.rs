@@ -8,13 +8,14 @@ use llvm::target::*;
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::ffi::CString;
-use std::io::Read;
+use std::ffi::{CStr, CString};
+use std::io::{Write, Read};
 use std::mem;
 use std::rc::Rc;
 use std::ptr;
 
 use libc;
+use logging;
 
 use parser::*;
 
@@ -26,7 +27,7 @@ use jit::callbacks::*;
 pub enum Value {
     Array(Vec<Rc<Value>>),
     Dict(BTreeMap<CString, Rc<Value>>),
-    Lambda(u64),
+    Lambda(usize),
     Float(f64),
     Str(CString),
     Null,
@@ -34,7 +35,7 @@ pub enum Value {
 
 impl Drop for Value {
     fn drop(&mut self) {
-        println!("droped value: {:?}", self);
+        logging::debug(&format!("droped value: {:?}", self));
     }
 }
 
@@ -54,6 +55,8 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Box<Context> {
+        logging::debug("create context");
+
         unsafe {
             let context = LLVMContextCreate();
 
@@ -189,14 +192,18 @@ impl Context {
 
             LLVMDisposeBuilder(self.llvm_builder);
 
+            logging::debug("verify module");
             // let mut buffer = 0 as *mut i8;
             LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMAbortProcessAction, 0 as *mut _);
             // LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMPrintMessageAction, &mut buffer);
             // let msg = unsafe { CString::from_raw(buffer) };
             // println!("-- error --\n{:?}", msg);
 
-            println!("-- dump --");
-            LLVMDumpModule(self.llvm_module);
+            logging::debug("-- dump --");
+            let data = LLVMPrintModuleToString(self.llvm_module);
+            let cast = CStr::from_ptr(data);
+            let mut dump = File::create("main.ir").unwrap();
+            dump.write(cast.to_bytes()).unwrap();
         }
     }
 
@@ -232,7 +239,7 @@ impl Context {
 
                 self.runtime_variables.insert(
                     CString::new(name.as_bytes()).unwrap(),
-                    Rc::new(Value::Lambda(func as u64))
+                    Rc::new(Value::Lambda(func as usize))
                 );
             }
 
@@ -256,7 +263,9 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
-            LLVMDisposeModule(self.llvm_module);
+            // logging::debug("drop module");
+            // LLVMDisposeModule(self.llvm_module);
+            logging::debug("drop context");
             LLVMContextDispose(self.llvm_ctx);
         }
     }

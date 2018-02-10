@@ -1,12 +1,12 @@
 //!
 //! Build llvm ir from parser input.
 //!
-//! # TODO
-//!
-//! + reuse string constants
-//! + optemize pure expressions
+//! TODO: reuse string constants
+//! TODO: optemize pure expressions
 //!
 use pest::iterators::Pair;
+
+use logging;
 
 use llvm;
 use llvm::prelude::*;
@@ -20,6 +20,8 @@ use parser::*;
 use jit::Context;
 
 pub fn consume(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("consume");
+
     match pair.as_rule() {
         Rule::block => block(ctx, pair),
         Rule::statement => statement(ctx, pair),
@@ -28,6 +30,7 @@ pub fn consume(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn block(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("block");
     let mut last = 0 as LLVMValueRef;
 
     for pair in pair.into_inner() {
@@ -38,6 +41,7 @@ fn block(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("statement");
     let next = pair.into_inner().next().unwrap();
 
     match next.as_rule() {
@@ -49,6 +53,7 @@ fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 unsafe fn build_string(ctx: &mut Context, s: &str) -> LLVMValueRef {
+    logging::debug("build_string");
     let cstr = LLVMBuildGlobalStringPtr(
         ctx.llvm_builder,
         CString::new(s).unwrap().as_ptr(),
@@ -67,6 +72,7 @@ unsafe fn build_string(ctx: &mut Context, s: &str) -> LLVMValueRef {
 }
 
 fn string(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("string");
     let s = pair.as_str();
     unsafe { build_string(ctx, s) }
 }
@@ -77,6 +83,7 @@ enum AccessToken {
 }
 
 fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
+    logging::debug("access");
     let inner: Vec<_> = pair.into_inner().collect();
 
     if inner.len() == 1 {
@@ -100,6 +107,7 @@ fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
 }
 
 fn build_access_array(ctx: &mut Context, parts: &Vec<LLVMValueRef>) -> LLVMValueRef {
+    logging::debug("build_access_array");
     let an_ref = unsafe {
         let an = ctx.extern_functions.get("__array_new").unwrap();
 
@@ -131,6 +139,7 @@ fn build_access_array(ctx: &mut Context, parts: &Vec<LLVMValueRef>) -> LLVMValue
 }
 
 fn build_global_get(ctx: &mut Context, name: LLVMValueRef) -> LLVMValueRef {
+    logging::debug("build_global_get");
     let get_global = ctx.extern_functions.get("__global_get_func").unwrap();
     let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
     let args = vec![ctx.llvm_ctx_ptr, name];
@@ -158,6 +167,7 @@ fn build_global_get(ctx: &mut Context, name: LLVMValueRef) -> LLVMValueRef {
 }
 
 fn build_global_set(ctx: &mut Context, name: LLVMValueRef, value: LLVMValueRef) -> LLVMValueRef {
+    logging::debug("build_global_set");
     let global_set = ctx.extern_functions.get("__global_set").unwrap();
     let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
     let args = vec![ctx.llvm_ctx_ptr, name, value];
@@ -294,6 +304,7 @@ unsafe fn const_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMVal
 }
 
 unsafe fn generic_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("generic_op");
     let call = match op.as_rule() {
         Rule::op_add => ctx.extern_functions.get("__add").unwrap(),
         Rule::op_sub => ctx.extern_functions.get("__sub").unwrap(),
@@ -322,6 +333,7 @@ unsafe fn generic_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMV
 }
 
 unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("exp");
     let mut inner = pair.into_inner();
 
     let next = inner.next().unwrap();
@@ -383,6 +395,7 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("assign");
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
@@ -402,6 +415,7 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     match access_token {
         AccessToken::Pure(name) => {
+            logging::debug("  pure");
             if ctx.local_stack.len() > 0 {
                 ctx.local_stack.last_mut().unwrap().insert(name, ex);
 
@@ -414,6 +428,7 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
             }
         }
         AccessToken::Parts(parts) => {
+            logging::debug("  parts");
             let ident_array = build_access_array(ctx, &parts);
             build_global_set(ctx, ident_array, ex)
         }
@@ -421,6 +436,7 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("lambda");
     let mut inner = pair.into_inner();
     let mut params = Vec::new();
     let mut param_refs = BTreeMap::new();
@@ -448,15 +464,22 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
         let last = block(ctx, inner.next().unwrap());
 
+        logging::debug("  build ret");
+
         LLVMBuildRet(ctx.llvm_builder, last);
 
         ctx.block_stack.pop();
         ctx.local_stack.pop();
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, ctx.block_stack[ctx.block_stack.len() - 1]);
 
-        let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
+        logging::debug(&format!("  cast func ptr {:?} {:?}", LLVMGetValueKind(func), LLVMGetTypeKind(ctx.llvm_ptr)));
+
+        // let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
+        let ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
         let lambda_new = ctx.extern_functions.get("__lambda_new").unwrap();
         let args = vec![ptr];
+
+        logging::debug("  build new lambda value");
 
         LLVMBuildCall(
             ctx.llvm_builder,
@@ -470,10 +493,13 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("call");
     let mut call = pair.into_inner();
     let mut params = Vec::new();
 
     let access_token = access(ctx, call.next().unwrap());
+
+    logging::debug("  params");
 
     if let Some(ps) = call.next() {
         for mut param in ps.into_inner() {
@@ -486,10 +512,11 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     let func_ptr = match access_token {
         AccessToken::Pure(name) => {
+            logging::debug("  pure");
             let val = ctx.local_stack.last().and_then(|v| match v.get(&name) {
                 Some(var) => Some(*var),
                 None => {
-                    let val = { ctx.extern_functions.get(&name).clone() };
+                    let val = { logging::debug(&format!("  extern func {}", name)); ctx.extern_functions.get(&name).clone() };
                     match val {
                         Some(efunc) => Some(efunc.0),
                         None => {
@@ -518,6 +545,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
             }
         }
         AccessToken::Parts(parts) => {
+            logging::debug("  parts");
             let name = build_access_array(ctx, &parts);
             let func = build_global_get(ctx, name);
 
@@ -532,6 +560,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         }
     };
 
+    logging::debug(&format!("  build {:?}", unsafe { LLVMGetValueKind(func_ptr) }));
     unsafe {
         LLVMBuildCall(
             ctx.llvm_builder,
@@ -567,6 +596,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 // }
 
 fn dict(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("dict");
     let inner = pair.into_inner();
     let dict_new = ctx.extern_functions.get("__dict_new").unwrap().clone();
     let dict_insert = ctx.extern_functions.get("__dict_insert").unwrap().clone();
@@ -602,6 +632,7 @@ fn dict(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn array(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
+    logging::debug("array");
     let inner = pair.into_inner();
     let array_new = ctx.extern_functions.get("__array_new").unwrap().clone();
     let array_push = ctx.extern_functions.get("__array_push").unwrap().clone();
