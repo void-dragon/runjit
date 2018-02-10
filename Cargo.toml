@@ -8,4 +8,4 @@ pest = "1"
 pest_derive = "1"
 llvm-sys = "50"
 libc = "*"
-logging = { path = "../logging" }
+logging = "*"
