@@ -51,6 +51,26 @@ loop x < stuff {
 
 ```
 
+## interfacing with values
+
+**var.rj**
+```js
+stuff = 29
+```
+
+**main.rs**
+```rust
+extern crate runjit;
+
+fn main() {
+    let ctx = runjit::Context::new();
+
+    ctx.read_file("var.rj");
+
+    print!("stuff = {:?}", ctx.get("stuff"))
+}
+```
+
 ## dev setup
 
 ### linux

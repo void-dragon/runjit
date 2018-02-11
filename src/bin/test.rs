@@ -1,33 +1,34 @@
 extern crate runjit;
+#[macro_use]
 extern crate logging;
 
 use runjit::jit::Context;
 
-fn myprint() {
-    println!("in runjit");
+unsafe fn myprint(val: *const runjit::jit::Value) {
+    println!("in runjit {:?}", *val);
 }
 
 fn main() {
     let root = logging::root();
     root.clear_handlers();
-    root.add_handler(logging::FileHandler::new("test.log"));
+    root.add_handler(logging::FileHandler::new("test.log", true));
 
-    logging::debug("start");
+    debug!("start");
 
     let mut ctx = Context::new();
 
-    ctx.add_fn("print", myprint as *mut _, 0);
+    ctx.add_fn("print", myprint as *mut _, 1);
 
-    logging::debug("--- read ---");
+    debug!("--- read ---");
 
     ctx.read_file("samples/one.js");
 
-    logging::debug("--- run ---");
+    debug!("--- run ---");
 
     ctx.run();
 
-    logging::debug(&format!("{:?}", ctx.get("myvar")));
-    logging::debug(&format!("{:?}", ctx.get("x")));
-    logging::debug(&format!("{:?}", ctx.get("arr")));
-    logging::debug(&format!("--- done ---"));
+    debug!("{:?}", ctx.get("myvar"));
+    debug!("{:?}", ctx.get("x"));
+    debug!("{:?}", ctx.get("arr"));
+    debug!("--- done ---");
 }

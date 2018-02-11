@@ -15,7 +15,6 @@ use std::rc::Rc;
 use std::ptr;
 
 use libc;
-use logging;
 
 use parser::*;
 
@@ -35,7 +34,7 @@ pub enum Value {
 
 impl Drop for Value {
     fn drop(&mut self) {
-        logging::debug(&format!("droped value: {:?}", self));
+        debug!(name: "runjit.value", "droped value: {:?}", self);
     }
 }
 
@@ -55,7 +54,7 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Box<Context> {
-        logging::debug("create context");
+        debug!(name: "runjit", "create context");
 
         unsafe {
             let context = LLVMContextCreate();
@@ -192,14 +191,14 @@ impl Context {
 
             LLVMDisposeBuilder(self.llvm_builder);
 
-            logging::debug("verify module");
+            debug!("verify module");
             // let mut buffer = 0 as *mut i8;
             LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMAbortProcessAction, 0 as *mut _);
             // LLVMVerifyModule(self.llvm_module, LLVMVerifierFailureAction::LLVMPrintMessageAction, &mut buffer);
             // let msg = unsafe { CString::from_raw(buffer) };
             // println!("-- error --\n{:?}", msg);
 
-            logging::debug("-- dump --");
+            debug!("-- dump --");
             let data = LLVMPrintModuleToString(self.llvm_module);
             let cast = CStr::from_ptr(data);
             let mut dump = File::create("main.ir").unwrap();
@@ -263,9 +262,9 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
-            // logging::debug("drop module");
+            // debug!("drop module");
             // LLVMDisposeModule(self.llvm_module);
-            logging::debug("drop context");
+            debug!("drop context");
             LLVMContextDispose(self.llvm_ctx);
         }
     }

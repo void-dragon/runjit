@@ -6,12 +6,11 @@ use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
 use libc;
-use logging;
 
 use jit::{Context, Value};
 
 pub unsafe extern "C" fn global_get(ctx: *mut Context, name: *const Value) -> *const Value {
-    logging::get("callback").debug(&format!("!! get {:?} !!", *name));
+    debug!(name: "runjit.callback", "!! get {:?} !!", *name);
 
     if let Value::Array(ref a) = *name {
         if let Value::Str(ref s) = *a[0] {
@@ -27,7 +26,7 @@ pub unsafe extern "C" fn global_get(ctx: *mut Context, name: *const Value) -> *c
 }
 
 pub unsafe extern "C" fn global_get_func(ctx: *mut Context, name: *const Value) -> usize {
-    logging::get("callback").debug(&format!("!! get func {:?} !!", *name));
+    debug!(name: "runjit.callback", "!! get func {:?} !!", *name);
 
     if let Value::Array(ref a) = *name {
         if let Value::Str(ref s) = *a[0] {
@@ -47,7 +46,7 @@ pub unsafe extern "C" fn global_set(
     name: *const Value,
     val: *mut Value,
 ) -> *const Value {
-    logging::get("callback").debug(&format!("!! set {:?} = {:?} !!", *name, *val));
+    debug!(name: "runjit.callback", "!! set {:?} = {:?} !!", *name, *val);
 
     if let Value::Array(ref a) = *name {
         if let Value::Str(ref s) = *a[0] {
@@ -62,7 +61,7 @@ pub unsafe extern "C" fn global_set(
 }
 
 pub unsafe extern "C" fn add(left: *const Value, right: *const Value) -> *const Value {
-    logging::get("callback").debug("!! add !!");
+    debug!(name: "runjit.callback", "!! add !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -77,7 +76,7 @@ pub unsafe extern "C" fn add(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn sub(left: *const Value, right: *const Value) -> *const Value {
-    logging::get("callback").debug("!! sub !!");
+    debug!(name: "runjit.callback", "!! sub !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -92,7 +91,7 @@ pub unsafe extern "C" fn sub(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn mul(left: *const Value, right: *const Value) -> *const Value {
-    logging::get("callback").debug("!! mul !!");
+    debug!(name: "runjit.callback", "!! mul !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -107,7 +106,7 @@ pub unsafe extern "C" fn mul(left: *const Value, right: *const Value) -> *const 
 }
 
 pub unsafe extern "C" fn div(left: *const Value, right: *const Value) -> *const Value {
-    logging::get("callback").debug("!! div !!");
+    debug!(name: "runjit.callback", "!! div !!");
 
     let left_rc = Rc::from_raw(left);
     let right_rc = Rc::from_raw(right);
@@ -122,12 +121,12 @@ pub unsafe extern "C" fn div(left: *const Value, right: *const Value) -> *const 
 }
 
 pub extern "C" fn array_new() -> *const Value {
-    logging::get("callback").debug("!! new array !!");
+    debug!(name: "runjit.callback", "!! new array !!");
     Rc::into_raw(Rc::new(Value::Array(Vec::new())))
 }
 
 pub unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Value {
-    logging::get("callback").debug(&format!("!! pushing value !! {:?} {:?}", *arr, *v));
+    debug!(name: "runjit.callback", "!! pushing value !! {:?} {:?}", *arr, *v);
 
     if let Value::Array(ref mut a) = *arr {
         a.push(Rc::from_raw(v));
@@ -137,7 +136,7 @@ pub unsafe extern "C" fn array_push(arr: *mut Value, v: *mut Value) -> *const Va
 }
 
 pub extern "C" fn dict_new() -> *const Value {
-    logging::get("callback").debug("!! new dict !!");
+    debug!(name: "runjit.callback", "!! new dict !!");
 
     Rc::into_raw(Rc::new(Value::Dict(BTreeMap::new())))
 }
@@ -166,29 +165,29 @@ pub unsafe extern "C" fn dict_remove(dct: *mut Value, key: *mut Value) -> *const
 }
 
 pub extern "C" fn string_new() -> *const Value {
-    logging::get("callback").debug("!! new string !!");
+    debug!(name: "runjit.callback", "!! new string !!");
     Rc::into_raw(Rc::new(Value::Str(CString::new("").unwrap())))
 }
 
 pub unsafe extern "C" fn string_from(bytes: *mut libc::c_char) -> *const Value {
-    logging::get("callback").debug("!! string from !!");
+    debug!(name: "runjit.callback", "!! string from !!");
     // let data = CString::from_raw(bytes);
     let data = CStr::from_ptr(bytes);
     Rc::into_raw(Rc::new(Value::Str(data.to_owned())))
 }
 
 pub extern "C" fn float_new(v: f64) -> *const Value {
-    logging::get("callback").debug(&format!("!! new float {} !!", v));
+    debug!(name: "runjit.callback", "!! new float {} !!", v);
     Rc::into_raw(Rc::new(Value::Float(v)))
 }
 
 pub extern "C" fn lambda_new(v: usize) -> *const Value {
-    logging::get("callback").debug(&format!("!! new lambda {} !!", v));
+    debug!(name: "runjit.callback", "!! new lambda {} !!", v);
     Rc::into_raw(Rc::new(Value::Lambda(v)))
 }
 
 pub extern "C" fn value_delete(a: *const Value) -> *const Value {
-    logging::get("callback").debug("!! delete value !!");
+    debug!(name: "runjit.callback", "!! delete value !!");
 
     unsafe { Rc::from_raw(a) };
 
