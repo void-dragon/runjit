@@ -62,7 +62,7 @@ impl Context {
             let mut ctx = Box::new(Context {
                 llvm_ctx: context,
                 llvm_f64: LLVMDoubleTypeInContext(context),
-                llvm_ptr: LLVMPointerType(LLVMInt64TypeInContext(context), 0),
+                llvm_ptr: LLVMPointerType(LLVMInt64TypeInContext(context), 0),// TODO adept pointer size to actual maschine size
                 llvm_ctx_ptr: 0 as *mut _,
                 self_ptr: 0 as *const Context,
                 llvm_builder: LLVMCreateBuilderInContext(context),

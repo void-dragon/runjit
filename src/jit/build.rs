@@ -3,6 +3,7 @@
 //!
 //! TODO: reuse string constants
 //! TODO: optemize pure expressions
+//! TODO: create constants at build as values, instead of on execution time
 //!
 use pest::iterators::Pair;
 
@@ -442,15 +443,18 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "lambda >>");
-    let mut inner = pair.into_inner();
+    debug!(name: "runjit.build", "lambda >> {}", pair.as_str());
+    let mut inner: Vec<Pair<Rule>> = pair.into_inner().collect();
     let mut params = Vec::new();
     let mut param_refs = BTreeMap::new();
     let mut args = Vec::new();
 
-    for node in inner.next().unwrap().into_inner() {
-        params.push(String::from(node.as_str()));
-        args.push(ctx.llvm_ptr);
+    if inner.len() > 1 {
+        debug!(name: "runjit.build", "params >> {}", inner[0].as_str());
+        for node in inner.remove(0).into_inner() {
+            params.push(String::from(node.as_str()));
+            args.push(ctx.llvm_ptr);
+        }
     }
 
     unsafe {
@@ -468,7 +472,9 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         ctx.local_stack.push(param_refs);
         ctx.block_stack.push(bb);
 
-        let last = block(ctx, inner.next().unwrap());
+        let blk = inner.remove(0);
+            
+        let last = block(ctx, blk);
 
         debug!(name: "runjit.build", "  build ret");
 
