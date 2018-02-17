@@ -473,7 +473,7 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         ctx.block_stack.push(bb);
 
         let blk = inner.remove(0);
-            
+
         let last = block(ctx, blk);
 
         debug!(name: "runjit.build", "  build ret");
@@ -508,6 +508,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     debug!(name: "runjit.build", "call >>");
     let mut call = pair.into_inner();
     let mut params = Vec::new();
+    let mut args = Vec::new();
 
     let access_token = access(ctx, call.next().unwrap());
 
@@ -516,7 +517,10 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     if let Some(ps) = call.next() {
         for mut param in ps.into_inner() {
             match param.as_rule() {
-                Rule::exp => params.push(unsafe { exp(ctx, param) } ),
+                Rule::exp => {
+                    args.push(ctx.llvm_ptr);
+                    params.push(unsafe { exp(ctx, param) } );
+                },
                 _ => panic!("unexpected rule: {:?}", param.as_rule()),
             }
         }
@@ -528,7 +532,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     let func_ptr = match access_token {
         AccessToken::Pure(name) => {
-            debug!(name: "runjit.build", "  call pure");
+            debug!(name: "runjit.build", "  call pure '{}'", name);
             let val = ctx.local_stack.last().and_then(|v| match v.get(&name) {
                 Some(var) => Some(*var),
                 None => {
@@ -548,14 +552,13 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
                     let val = unsafe { build_string(ctx, &name) };
                     let name = build_access_array(ctx, &vec![val]);
                     let func = build_global_get(ctx, name);
-                    debug!(name: "runjit.build", "  cast pointer");
+
                     unsafe {
-                        // BUG Not a valid type for function argument! on windows
-                        let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
+                        let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0), 0);
                         // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
                         let func_ptr = LLVMBuildIntToPtr(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
                         // let func_ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ptr_type, b"var_to_func\0".as_ptr() as *const _);
-                        debug!(name: "runjit.build", "  done casting");
+
                         func_ptr
                     }
                 }
@@ -577,7 +580,6 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         }
     };
 
-    debug!(name: "runjit.build", "  build {:?}", unsafe { LLVMGetValueKind(func_ptr) });
     debug!(name: "runjit.build", "call <<");
 
     unsafe {

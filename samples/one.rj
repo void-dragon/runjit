@@ -1,6 +1,7 @@
 # do some lambda
 call = (a) => { print(a) }
-call("yes")
+# call("yes")
+call(1)
 
 # go for the dict
 x = { some: "content" }
