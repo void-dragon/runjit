@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["gojira"]
 
 [dependencies]
+clap = "2"
 pest = "1"
 pest_derive = "1"
 llvm-sys = "50"
