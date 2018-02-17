@@ -78,4 +78,4 @@ _loop = { "loop" ~ exp? ~ "{" ~ block ~ "}" }
 _return = { "return" ~ exp? }
 
 whitespace = _ { " " | "\t" | eol }
-comment = _{ "/*" ~ (!"*/" ~ any)* ~ "*/" | "//" ~ (!eol ~ any)* }
+comment = _{ "#[" ~ (!"]#" ~ any)* ~ "]#" | "#" ~ (!eol ~ any)* }
