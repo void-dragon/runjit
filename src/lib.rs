@@ -35,9 +35,8 @@ extern crate pest;
 extern crate pest_derive;
 extern crate llvm_sys as llvm;
 extern crate libc;
-// extern crate logging;
 #[macro_use]
-extern crate logging;
+extern crate log;
 
 pub mod ast;
 pub mod executor;

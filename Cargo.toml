@@ -7,6 +7,6 @@ authors = ["gojira"]
 clap = "2"
 pest = "1"
 pest_derive = "1"
-llvm-sys = "50"
+llvm-sys = "60"
 libc = "*"
-logging = { path = "../logging" }
+log = "*"

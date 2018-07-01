@@ -19,7 +19,7 @@ use parser::*;
 use jit::Context;
 
 pub fn consume(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "consume");
+    debug!(target: "runjit.build", "consume");
 
     match pair.as_rule() {
         Rule::block => block(ctx, pair),
@@ -29,7 +29,7 @@ pub fn consume(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn block(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "block");
+    debug!(target: "runjit.build", "block");
     let mut last = 0 as LLVMValueRef;
 
     for pair in pair.into_inner() {
@@ -40,7 +40,7 @@ fn block(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "statement");
+    debug!(target: "runjit.build", "statement");
     let next = pair.into_inner().next().unwrap();
 
     match next.as_rule() {
@@ -52,7 +52,7 @@ fn statement(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 unsafe fn build_string(ctx: &mut Context, s: &str) -> LLVMValueRef {
-    debug!(name: "runjit.build", "build_string");
+    debug!(target: "runjit.build", "build_string");
     let cstr = LLVMBuildGlobalStringPtr(
         ctx.llvm_builder,
         CString::new(s).unwrap().as_ptr(),
@@ -71,7 +71,7 @@ unsafe fn build_string(ctx: &mut Context, s: &str) -> LLVMValueRef {
 }
 
 fn string(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "string");
+    debug!(target: "runjit.build", "string");
     let s = pair.as_str();
     unsafe { build_string(ctx, s) }
 }
@@ -82,7 +82,7 @@ enum AccessToken {
 }
 
 fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
-    debug!(name: "runjit.build", "access");
+    debug!(target: "runjit.build", "access");
     let inner: Vec<_> = pair.into_inner().collect();
 
     if inner.len() == 1 {
@@ -106,7 +106,7 @@ fn access(ctx: &mut Context, pair: Pair<Rule>) -> AccessToken {
 }
 
 fn build_access_array(ctx: &mut Context, parts: &Vec<LLVMValueRef>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "build_access_array >>");
+    debug!(target: "runjit.build", "build_access_array >>");
     let an_ref = unsafe {
         let an = ctx.extern_functions.get("__array_new").unwrap();
 
@@ -133,12 +133,12 @@ fn build_access_array(ctx: &mut Context, parts: &Vec<LLVMValueRef>) -> LLVMValue
             )
         };
     }
-    debug!(name: "runjit.build", "build_access_array <<");
+    debug!(target: "runjit.build", "build_access_array <<");
     an_ref
 }
 
 fn build_global_get(ctx: &mut Context, name: LLVMValueRef) -> LLVMValueRef {
-    debug!(name: "runjit.build", "build_global_get >>");
+    debug!(target: "runjit.build", "build_global_get >>");
     let get_global = ctx.extern_functions.get("__global_get_func").unwrap();
     let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
     let args = vec![ctx.llvm_ctx_ptr, name];
@@ -160,13 +160,13 @@ fn build_global_get(ctx: &mut Context, name: LLVMValueRef) -> LLVMValueRef {
             delete_args.len() as u32,
             b"__value_delete\0".as_ptr() as *const _,
         );
-        debug!(name: "runjit.build", "build_global_get <<");
+        debug!(target: "runjit.build", "build_global_get <<");
         func
     }
 }
 
 fn build_global_set(ctx: &mut Context, name: LLVMValueRef, value: LLVMValueRef) -> LLVMValueRef {
-    debug!(name: "runjit.build", "build_global_set >>");
+    debug!(target: "runjit.build", "build_global_set >>");
     let global_set = ctx.extern_functions.get("__global_set").unwrap();
     let value_delete = ctx.extern_functions.get("__value_delete").unwrap();
     let args = vec![ctx.llvm_ctx_ptr, name, value];
@@ -188,7 +188,7 @@ fn build_global_set(ctx: &mut Context, name: LLVMValueRef, value: LLVMValueRef) 
             delete_args.len() as u32,
             b"__value_delete\0".as_ptr() as *const _,
         );
-        debug!(name: "runjit.build", "build_global_set <<");
+        debug!(target: "runjit.build", "build_global_set <<");
         ret
     }
 }
@@ -303,7 +303,7 @@ unsafe fn const_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMVal
 }
 
 unsafe fn generic_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMValueRef, op: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "generic_op");
+    debug!(target: "runjit.build", "generic_op");
     let call = match op.as_rule() {
         Rule::op_add => ctx.extern_functions.get("__add").unwrap(),
         Rule::op_sub => ctx.extern_functions.get("__sub").unwrap(),
@@ -332,7 +332,7 @@ unsafe fn generic_op(ctx: &mut Context, left_ref: LLVMValueRef, right_ref: LLVMV
 }
 
 unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "exp >>");
+    debug!(target: "runjit.build", "exp >>");
     let mut inner = pair.into_inner();
 
     let next = inner.next().unwrap();
@@ -367,11 +367,11 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         Rule::access => {
             match access(ctx, next) {
                 AccessToken::Pure(name) => {
-                    debug!(name: "runjit.build", "  pure access");
+                    debug!(target: "runjit.build", "  pure access");
                     *ctx.local_stack.last().unwrap().get(&name).unwrap()
                 }
                 AccessToken::Parts(parts) => {
-                    debug!(name: "runjit.build", "  parts access");
+                    debug!(target: "runjit.build", "  parts access");
                     let name = build_access_array(ctx, &parts);
                     build_global_get(ctx, name)
                 }
@@ -380,7 +380,7 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         _ => panic!("unknown exp: {:?}", rule),
     };
 
-    debug!(name: "runjit.build", "exp <<");
+    debug!(target: "runjit.build", "exp <<");
 
     if let Some(op) = inner.next() {
         if let Some(right) = inner.next() {
@@ -398,7 +398,7 @@ unsafe fn exp(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "assign >>");
+    debug!(target: "runjit.build", "assign >>");
     let mut inner = pair.into_inner();
 
     let v = inner.next().unwrap();
@@ -418,7 +418,7 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
     let ret = match access_token {
         AccessToken::Pure(name) => {
-            debug!(name: "runjit.build", "  pure {}", ctx.local_stack.len());
+            debug!(target: "runjit.build", "  pure {}", ctx.local_stack.len());
             if ctx.local_stack.len() > 0 {
                 ctx.local_stack.last_mut().unwrap().insert(name, ex);
 
@@ -431,26 +431,26 @@ fn assign(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
             }
         }
         AccessToken::Parts(parts) => {
-            debug!(name: "runjit.build", "  parts");
+            debug!(target: "runjit.build", "  parts");
             let ident_array = build_access_array(ctx, &parts);
             build_global_set(ctx, ident_array, ex)
         }
     };
 
-    debug!(name: "runjit.build", "assign <<");
+    debug!(target: "runjit.build", "assign <<");
 
     ret
 }
 
 fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "lambda >> {}", pair.as_str());
+    debug!(target: "runjit.build", "lambda >> {}", pair.as_str());
     let mut inner: Vec<Pair<Rule>> = pair.into_inner().collect();
     let mut params = Vec::new();
     let mut param_refs = BTreeMap::new();
     let mut args = Vec::new();
 
     if inner.len() > 1 {
-        debug!(name: "runjit.build", "params >> {}", inner[0].as_str());
+        debug!(target: "runjit.build", "params >> {}", inner[0].as_str());
         for node in inner.remove(0).into_inner() {
             params.push(String::from(node.as_str()));
             args.push(ctx.llvm_ptr);
@@ -476,7 +476,7 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 
         let last = block(ctx, blk);
 
-        debug!(name: "runjit.build", "  build ret");
+        debug!(target: "runjit.build", "  build ret");
 
         LLVMBuildRet(ctx.llvm_builder, last);
 
@@ -484,14 +484,14 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         ctx.local_stack.pop();
         LLVMPositionBuilderAtEnd(ctx.llvm_builder, ctx.block_stack[ctx.block_stack.len() - 1]);
 
-        debug!(name: "runjit.build", "  cast func ptr {:?} {:?}", LLVMGetValueKind(func), LLVMGetTypeKind(ctx.llvm_ptr));
+        debug!(target: "runjit.build", "  cast func ptr {:?} {:?}", LLVMGetValueKind(func), LLVMGetTypeKind(ctx.llvm_ptr));
 
         // let ptr = LLVMBuildPtrToInt(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
         let ptr = LLVMBuildBitCast(ctx.llvm_builder, func, ctx.llvm_ptr, b"__lambda_address\0".as_ptr() as *const _);
         let lambda_new = ctx.extern_functions.get("__lambda_new").unwrap();
         let args = vec![ptr];
 
-        debug!(name: "runjit.build", "lambda <<");
+        debug!(target: "runjit.build", "lambda <<");
 
         LLVMBuildCall(
             ctx.llvm_builder,
@@ -505,14 +505,14 @@ fn lambda(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 }
 
 fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "call >>");
+    debug!(target: "runjit.build", "call >>");
     let mut call = pair.into_inner();
     let mut params = Vec::new();
     let mut args = Vec::new();
 
     let access_token = access(ctx, call.next().unwrap());
 
-    debug!(name: "runjit.build", "  params");
+    debug!(target: "runjit.build", "  params");
 
     if let Some(ps) = call.next() {
         for mut param in ps.into_inner() {
@@ -527,16 +527,16 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
     }
 
     for p in &params {
-        debug!(name: "runjit.build", "param type {:?}",unsafe { LLVMGetValueKind(*p) });
+        debug!(target: "runjit.build", "param type {:?}",unsafe { LLVMGetValueKind(*p) });
     }
 
     let func_ptr = match access_token {
         AccessToken::Pure(name) => {
-            debug!(name: "runjit.build", "  call pure '{}'", name);
+            debug!(target: "runjit.build", "  call pure '{}'", name);
             let val = ctx.local_stack.last().and_then(|v| match v.get(&name) {
                 Some(var) => Some(*var),
                 None => {
-                    let val = { debug!(name: "runjit.build", "  extern func {}", name); ctx.extern_functions.get(&name).clone() };
+                    let val = { debug!(target: "runjit.build", "  extern func {}", name); ctx.extern_functions.get(&name).clone() };
                     match val {
                         Some(efunc) => Some(efunc.0),
                         None => {
@@ -565,10 +565,10 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
             }
         }
         AccessToken::Parts(parts) => {
-            debug!(name: "runjit.build", "  parts");
+            debug!(target: "runjit.build", "  parts");
             let name = build_access_array(ctx, &parts);
             let func = build_global_get(ctx, name);
-            debug!(name: "runjit.build", "  cast pointer");
+            debug!(target: "runjit.build", "  cast pointer");
             unsafe {
                 let ptr_type = LLVMPointerType(LLVMFunctionType(ctx.llvm_ptr, params.as_ptr() as *mut _, params.len() as u32, 0), 0);
                 // let ptr_type = LLVMFunctionType(ctx.llvm_ptr, args.as_ptr() as *mut _, args.len() as u32, 0);
@@ -580,7 +580,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         }
     };
 
-    debug!(name: "runjit.build", "call <<");
+    debug!(target: "runjit.build", "call <<");
 
     unsafe {
         LLVMBuildCall(
@@ -617,7 +617,7 @@ fn call(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
 // }
 
 fn dict(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "dict >>");
+    debug!(target: "runjit.build", "dict >>");
     let inner = pair.into_inner();
     let dict_new = ctx.extern_functions.get("__dict_new").unwrap().clone();
     let dict_insert = ctx.extern_functions.get("__dict_insert").unwrap().clone();
@@ -649,13 +649,13 @@ fn dict(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
         }
     }
 
-    debug!(name: "runjit.build", "dict <<");
+    debug!(target: "runjit.build", "dict <<");
 
     dct
 }
 
 fn array(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
-    debug!(name: "runjit.build", "array >>");
+    debug!(target: "runjit.build", "array >>");
     let inner = pair.into_inner();
     let array_new = ctx.extern_functions.get("__array_new").unwrap().clone();
     let array_push = ctx.extern_functions.get("__array_push").unwrap().clone();
@@ -683,6 +683,6 @@ fn array(ctx: &mut Context, pair: Pair<Rule>) -> LLVMValueRef {
             );
         }
     }
-    debug!(name: "runjit.build", "array <<");
+    debug!(target: "runjit.build", "array <<");
     arr
 }

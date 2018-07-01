@@ -1,15 +1,40 @@
 extern crate clap;
 extern crate runjit;
+
 #[macro_use]
-extern crate logging;
+extern crate log;
 
 use clap::{Arg, App};
+use std::io::Write;
+use std::sync::Mutex;
 
 use runjit::jit::Context;
 
 unsafe fn myprint(val: *const runjit::jit::Value) {
     println!("in runjit {:?}", *val);
 }
+
+struct FileLogger {
+    out: Option<Mutex<std::fs::File>>,
+}
+
+impl log::Log for FileLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Debug
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            if let Some(ref out) = self.out {
+                writeln!(*out.lock().unwrap(), "{} | {} | {:?}:{:?} | {}", record.level(), record.target(), record.file().unwrap(), record.line().unwrap(), record.args()).unwrap();
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static mut LOGGER: FileLogger = FileLogger { out: None };
 
 fn main() {
     let matches = App::new("runjit - cli")
@@ -19,9 +44,11 @@ fn main() {
 
     let filename = matches.value_of("file").unwrap();
 
-    let root = logging::root();
-    root.clear_handlers();
-    root.add_handler(logging::FileHandler::new("cli.log", true));
+    unsafe {
+        LOGGER.out = Some(Mutex::new(std::fs::File::create("cli.log").unwrap()));
+        log::set_logger(&LOGGER).unwrap();
+    }
+    log::set_max_level(log::LevelFilter::Debug);
 
     debug!("start");
 

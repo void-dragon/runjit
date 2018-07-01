@@ -90,7 +90,7 @@ On windows we use a MinGW setup.
 + Get the sweet [LLVM source folder](http://releases.llvm.org/download.html) and extract it.
   Configure with CMake for a Ninja build. Pay attention, that the build is switched to *release*.
 + Install rustup up and use {stable|nightly}-gnu build chain.
-+ LLVM_SYS_50_PREBUILD environment variable to the LLVM build folder.
++ LLVM_SYS_60_PREBUILD environment variable to the LLVM build folder.
 + Finaly build runjit.
 
 ## Additional Information
